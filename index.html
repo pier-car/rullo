@@ -942,7 +942,7 @@ const trainerCb = {
   data: r => {
     const L = S.live, now = performance.now();
     if (r.power != null) { L.power = r.power; L.buf.push([now, r.power]); }
-    if (r.cadence != null) L.cad = r.cadence;
+    if (r.cadence != null) { L.cad = r.cadence; if (r.cadence > 0) L.cadSeen = true; }
     if (r.speed != null) L.speed = r.speed;
     if (r.hr) L.trainerHr = r.hr;
     L.lastData = now;
@@ -1067,13 +1067,15 @@ function skipStep() {
 
 function onSecond() {
   const L = S.live, ok = fresh();
-  const p = ok ? (L.power ?? 0) : 0, c = ok ? (L.cad ?? 0) : 0, v = ok ? (L.speed ?? 0) : 0, h = liveHr();
+  const p = ok ? (L.power ?? 0) : 0, v = ok ? (L.speed ?? 0) : 0, h = liveHr();
+  const hasCad = !!L.cadSeen;
+  const c = ok && hasCad ? (L.cad ?? 0) : (hasCad ? 0 : null);
   R.dist += v / 3.6;
   const loc = curLoc();
   const D = R.data;
   const t = Math.max(D.t.length ? D.t[D.t.length - 1] + 1 : 0, Math.round((Date.now() - R.start) / 1000));
   const tg = (R.mode === 'erg' || R.wk) ? targetW() : null;
-  D.t.push(t); D.p.push(Math.round(p)); D.c.push(Math.round(c)); D.h.push(h ? Math.round(h) : null);
+  D.t.push(t); D.p.push(Math.round(p)); D.c.push(c == null ? null : Math.round(c)); D.h.push(h ? Math.round(h) : null);
   D.v.push(Math.round(v * 10) / 10); D.d.push(Math.round(R.dist * 10) / 10);
   D.g.push(tg != null ? Math.round(tg) : null); D.st.push(R.wk ? (loc ? loc.i : -1) : null);
 
@@ -1091,17 +1093,20 @@ function onSecond() {
   }
   // test a rampa: fine automatica quando la cadenza crolla
   if (R.wk && R.wk.rampTest && loc && loc.i > 0 && R.rampFtp == null) {
-    R.rampLow = c < 55 ? R.rampLow + 1 : 0;
+    const rt = targetW() || 0;
+    const failing = hasCad ? c < 55 : (rt > 0 && p < rt * 0.6);
+    R.rampLow = failing ? R.rampLow + 1 : 0;
     if (R.rampLow >= 8) endRampTest();
   }
   // protezione "spirale" ERG: se la cadenza crolla, dimezza i watt finché riparte
   if (ergActive() && !(R.wk && R.wk.rampTest) && R.state === 'running') {
     const tw = targetW() || 0;
     if (!R.rescue) {
-      R.lowCad = (c < 45 && tw >= 90 && ok) ? R.lowCad + 1 : 0;
-      if (R.lowCad >= 4) { R.rescue = true; R.highCad = 0; R.banner = { text: 'Cadenza troppo bassa: resistenza dimezzata. Torna sopra 70 rpm e i watt tornano all’obiettivo.', kind: 'warn' }; }
+      const struggling = hasCad ? c < 45 : p < tw * 0.4;
+      R.lowCad = (struggling && tw >= 90 && ok) ? R.lowCad + 1 : 0;
+      if (R.lowCad >= 4) { R.rescue = true; R.highCad = 0; R.banner = { text: hasCad ? 'Cadenza troppo bassa: resistenza dimezzata. Torna sopra 70 rpm e i watt tornano all’obiettivo.' : 'Pedalata in calo: resistenza dimezzata. Riprendi ritmo e i watt tornano all’obiettivo.', kind: 'warn' }; }
     } else {
-      R.highCad = c >= 70 ? R.highCad + 1 : 0;
+      R.highCad = (hasCad ? c >= 70 : p >= Math.max(50, tw * 0.5) * 0.85) ? R.highCad + 1 : 0;
       if (R.highCad >= 3) { R.rescue = false; R.lowCad = 0; R.banner = null; toast('Watt obiettivo ripristinati'); }
     }
   }
