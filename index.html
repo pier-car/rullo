@@ -8,7 +8,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#0A1120">
 <title>Rullo</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚴‍♀️</text></svg>">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
@@ -208,6 +210,46 @@ label.file input{position:absolute;inset:0;opacity:0}
 #toast.show{opacity:1;transform:translate(-50%,0)}
 body.riding #toast{bottom:calc(18px + env(safe-area-inset-bottom,0px))}
 
+/* ---------- Guida iniziale ---------- */
+.guide{align-items:flex-start;overflow:auto}
+.guide .w-in{margin:auto 0}
+.guide h2{font-size:34px;margin:0 0 12px}
+.g-dots{display:flex;gap:6px;margin-bottom:10px}
+.g-dots i{flex:1;height:5px;border-radius:3px;background:var(--surface2)}
+.g-dots i.done{background:var(--ink2)}.g-dots i.on{background:var(--primary)}
+.g-count{font-size:13px;color:var(--ink2);margin:0 0 14px}
+.g-ok,.g-warn{border-radius:12px;padding:12px 14px;background:var(--surface);border-left:4px solid var(--ok);font-weight:500}
+.g-warn{border-left-color:var(--warn)}
+.g-nav{display:flex;gap:8px;margin-top:18px}
+.g-nav .btn{flex:1}
+.g-skip{text-align:center;margin:6px 0 0}
+.g-live{display:flex;align-items:baseline;justify-content:center;gap:8px;background:var(--surface);border-radius:14px;padding:14px;margin:10px 0}
+.g-live b{font:700 64px/1 var(--num);font-variant-numeric:tabular-nums}
+.g-live span{color:var(--ink2)}
+.steps{padding-left:22px;margin:10px 0}
+.steps li{margin:8px 0}
+
+/* ---------- Diagnostica ---------- */
+.log{font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--bg);border-radius:10px;padding:12px;white-space:pre-wrap;word-break:break-word;max-height:55dvh;overflow:auto;margin:8px 0}
+.keys{display:none}
+
+/* ---------- Schermo grande (Mac, PC, tablet) ---------- */
+@media (min-width:900px) and (min-height:561px){
+  .view{max-width:1040px}
+  #v-ride{display:grid;max-width:1240px;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);grid-template-areas:"top top" "banner banner" "hero prof" "step prof" "metrics ctl";grid-template-rows:auto auto auto auto 1fr;column-gap:32px;row-gap:14px;align-content:start}
+  .ride-top{grid-area:top}.banner{grid-area:banner}.hero{grid-area:hero}.step{grid-area:step}.metrics{grid-area:metrics;align-self:start}
+  .prof,body.riding .prof{grid-area:prof;height:100%;min-height:260px}
+  .controls{grid-area:ctl;margin-top:0;align-self:start}
+  .power{font-size:clamp(170px,17vw,270px)}
+  .tgt{font-size:26px}.tgt b{font-size:32px}
+  .step{padding:14px 18px}.step-name{font-size:22px}.step-next{font-size:16px}.step-left{font-size:60px}
+  .m{padding:12px 8px 9px}.m b{font-size:40px}.m span{font-size:13px}
+  .clock{font-size:38px}
+  .keys{display:block;font-size:13px;color:var(--ink2);text-align:center;margin:2px 0 0}
+  .keys kbd{font:600 12px var(--font);border:1px solid var(--line);border-radius:5px;padding:1px 6px;background:var(--surface)}
+  .tabs{left:50%;right:auto;transform:translateX(-50%);width:min(560px,100%);border:1px solid var(--line);border-bottom:0;border-radius:16px 16px 0 0}
+}
+
 /* ---------- Benvenuto ---------- */
 .welcome{position:fixed;inset:0;z-index:80;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:calc(24px + env(safe-area-inset-top,0px)) 24px calc(24px + env(safe-area-inset-bottom,0px))}
 .w-in{width:100%;max-width:440px}
@@ -282,6 +324,7 @@ body.riding #toast{bottom:calc(18px + env(safe-area-inset-bottom,0px))}
       <button class="btn big" id="bSkip" hidden>Salta</button>
       <button class="btn big danger" id="bEnd" hidden>Termina</button>
     </div>
+    <p class="keys"><kbd>Spazio</kbd> avvia e mette in pausa, <kbd>↑</kbd> <kbd>↓</kbd> regolano watt o pendenza</p>
   </div>
 </section>
 
@@ -316,19 +359,31 @@ body.riding #toast{bottom:calc(18px + env(safe-area-inset-bottom,0px))}
   </div>
   <div class="section"><h3>Le tue zone di potenza</h3><div class="zones" id="pZones"></div></div>
   <div class="section help">
-    <h3>Su iPhone</h3>
+    <h3>Dove usarla</h3>
+    <ul>
+      <li><b>Mac, PC e Android:</b> apri l’indirizzo con Chrome. Funziona tutto, e puoi installarla come app (pulsante qui sotto o icona nella barra dell’indirizzo).</li>
+      <li><b>iPhone e iPad:</b> apri l’indirizzo con l’app gratuita Bluefy: Safari non può usare il Bluetooth.</li>
+      <li>Gli allenamenti restano nel dispositivo e nel browser in cui li salvi. Usa sempre lo stesso, e ogni tanto fai un backup.</li>
+    </ul>
+    <div class="row"><button class="btn primary" id="pInstall" hidden>Installa come app</button></div>
+    <h3>Prima di pedalare</h3>
     <ol>
-      <li>Installa <b>Bluefy</b> (gratis) dall’App Store e apri questo indirizzo da lì: Safari non può usare il Bluetooth.</li>
-      <li>Chiudi Zwift o altre app collegate al rullo: il rullo accetta un solo controllore alla volta.</li>
-      <li>Per il cardio, attiva sul COROS la trasmissione della frequenza cardiaca e tocca “Collega cardio”.</li>
-      <li>Disattiva il blocco automatico dello schermo durante l’allenamento (Impostazioni › Schermo e luminosità).</li>
+      <li><b>Chiudi Zwift del tutto</b> (anche Zwift Companion sul telefono) e OneLap Fit: il rullo parla con una sola app alla volta, e finché è collegato a Zwift qui non compare.</li>
+      <li>Per i battiti dal COROS: spegni il Bluetooth del telefono, sull’orologio tieni premuto Indietro e scegli “Trasmetti FC”, poi qui tocca “Collega cardio”.</li>
       <li>In modalità ERG tieni una cadenza regolare tra 80 e 95: è il rullo a regolare la durezza, non le marce.</li>
+      <li>Su iPhone disattiva il blocco automatico dello schermo (Impostazioni › Schermo e luminosità).</li>
     </ol>
+  </div>
+  <div class="section"><h3>Diagnostica</h3>
+    <div id="pSupport"></div>
+    <p class="muted">Se il rullo non si collega o si comporta in modo strano, il registro dice cosa è successo.</p>
+    <div class="row"><button class="btn" id="pLogShow">Vedi registro</button><button class="btn" id="pLogShare">Condividi registro</button></div>
   </div>
   <div class="section"><h3>Dati</h3>
     <p class="muted">Tutto resta su questo telefono. Fai ogni tanto un backup.</p>
     <div class="row"><button class="btn" id="pExport">Esporta backup</button><label class="btn file">Importa backup<input type="file" id="pImport" accept=".json,application/json"></label></div>
     <div class="row"><button class="btn subtle" id="pDemo">Prova in modalità demo</button><button class="btn subtle" id="pWelcome">Rivedi il benvenuto</button></div>
+    <div class="row"><button class="btn" id="pGuide">Rifai la guida iniziale</button></div>
     <p class="muted" id="ver"></p>
   </div>
 </section>
@@ -733,7 +788,7 @@ Collega il rullo, scegli cosa fare e pedala. Al resto pensa lei.`,
 Oggi l’allenamento migliore è quello che hai voglia di fare.`
 };
 /* ==================================================== */
-const APP_VERSION = '1.1';
+const APP_VERSION = '2.2';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -761,6 +816,68 @@ const store = {
   },
   del(k) { try { localStorage.removeItem('rl.' + k); } catch (e) { } }
 };
+
+/* ---------- Registro diagnostico ---------- */
+const LOG = store.get('log', []);
+function logEvent(tag, msg) {
+  LOG.push(`${new Date().toISOString().slice(5, 19).replace('T', ' ')} [${tag}] ${msg}`);
+  if (LOG.length > 300) LOG.splice(0, LOG.length - 300);
+  clearTimeout(logEvent._t);
+  logEvent._t = setTimeout(() => { try { localStorage.setItem('rl.log', JSON.stringify(LOG)); } catch (e) { } }, 1500);
+}
+const flushLog = () => { try { localStorage.setItem('rl.log', JSON.stringify(LOG)); } catch (e) { } };
+window.addEventListener('pagehide', flushLog);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushLog(); });
+window.addEventListener('error', e => logEvent('errore', `${e.message} @${e.lineno || '?'}`));
+window.addEventListener('unhandledrejection', e => logEvent('errore', 'promise: ' + ((e.reason && e.reason.message) || e.reason)));
+
+/* ---------- Archivio allenamenti: IndexedDB (capiente), con ripiego su localStorage ---------- */
+const db = (() => {
+  let opening = null;
+  const open = () => opening || (opening = new Promise((res, rej) => {
+    if (!('indexedDB' in window)) return rej(new Error('IndexedDB assente'));
+    const rq = indexedDB.open('rullo', 1);
+    rq.onupgradeneeded = () => rq.result.createObjectStore('kv');
+    rq.onsuccess = () => res(rq.result);
+    rq.onerror = () => rej(rq.error || new Error('apertura fallita'));
+    rq.onblocked = () => rej(new Error('archivio bloccato'));
+  }));
+  const tx = async (mode, fn) => {
+    const d = await open();
+    return new Promise((res, rej) => {
+      const t = d.transaction('kv', mode);
+      const r = fn(t.objectStore('kv'));
+      t.oncomplete = () => res(r ? r.result : undefined);
+      t.onerror = t.onabort = () => rej(t.error || new Error('transazione fallita'));
+    });
+  };
+  return {
+    usingIdb: true,
+    async get(k) {
+      try { const v = await tx('readonly', s => s.get(k)); if (v !== undefined) return v; }
+      catch (e) { logEvent('archivio', 'lettura: ' + e.message); }
+      return store.get(k, null);
+    },
+    async set(k, v) {
+      try { await tx('readwrite', s => s.put(v, k)); return true; }
+      catch (e) { this.usingIdb = false; logEvent('archivio', 'scrittura: ' + e.message); return store.set(k, v); }
+    },
+    async del(k) {
+      try { await tx('readwrite', s => s.delete(k)); } catch (e) { logEvent('archivio', 'cancellazione: ' + e.message); }
+      store.del(k);
+    }
+  };
+})();
+// sposta in IndexedDB gli allenamenti salvati dalle versioni precedenti
+async function migrateSessions() {
+  for (const s of store.get('sessions', [])) {
+    const old = store.get('s.' + s.id, null);
+    if (!old) continue;
+    let ok = false;
+    try { ok = (await db.set('s.' + s.id, old)) && !!(await db.get('s.' + s.id)) && db.usingIdb; } catch (e) { }
+    if (ok) { try { localStorage.removeItem('rl.s.' + s.id); } catch (e) { } }
+  }
+}
 
 /* ---------- Stato ---------- */
 const DEFAULT_PROFILE = { name: '', ftp: 150, weight: 60, hrMax: 190, sound: true, coachPhone: '', endMsg: '' };
@@ -834,6 +951,7 @@ class BleTrainer {
   async connect() {
     this.dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [U.ftms] }, { services: [U.cps] }], optionalServices: [U.ftms, U.cps, U.hrs] });
     this.name = this.dev.name || 'Rullo';
+    logEvent('rullo', 'scelto ' + this.name);
     this.dev.addEventListener('gattserverdisconnected', () => this.onDisc());
     this.cb.state('connecting');
     await this.setup();
@@ -855,7 +973,7 @@ class BleTrainer {
         await this.write(Core.cmd.requestControl());
         await this.write(Core.cmd.start()).catch(() => { });
         this.canControl = true;
-      } catch (e) { this.canControl = false; toast('Il rullo invia i dati ma non accetta comandi: ' + e.message); }
+      } catch (e) { this.canControl = false; logEvent('rullo', 'controllo negato: ' + e.message + (e.code ? ' cod.' + e.code : '')); toast('Il rullo invia i dati ma non accetta comandi: ' + e.message); }
     } else {
       const cs = await srv.getPrimaryService(U.cps);
       const ch = await cs.getCharacteristic(U.cpsMeas);
@@ -864,6 +982,7 @@ class BleTrainer {
       await ch.startNotifications();
       this.canControl = false;
     }
+    logEvent('rullo', `collegato (${svc ? 'FTMS' : 'solo potenza'}), controllo ${this.canControl ? 'sì' : 'no'}, funzioni ${JSON.stringify(this.features)}, potenza ${JSON.stringify(this.range)}`);
     this.cb.state('on');
   }
   write(bytes) {
@@ -893,6 +1012,7 @@ class BleTrainer {
         const b = this.next; this.next = null;
         try { await this.write(b); }
         catch (e) {
+          logEvent('rullo', `comando 0x${b[0].toString(16)} fallito: ${e.message}${e.code ? ' cod.' + e.code : ''}`);
           if (e.code === 5) { try { await this.write(Core.cmd.requestControl()); await this.write(b); } catch (_) { } }
         }
       }
@@ -904,6 +1024,7 @@ class BleTrainer {
   async onDisc() {
     this.canControl = false; this.cp = null;
     if (this.userClose) { this.cb.state('off'); return; }
+    logEvent('rullo', 'connessione caduta');
     this.cb.state('reconnecting');
     for (const s of [1, 2, 3, 5, 5, 8, 8, 10, 15, 15]) {
       await sleep(s * 1000);
@@ -911,6 +1032,7 @@ class BleTrainer {
       try { await this.setup(); this.cb.reconnected(); return; } catch (e) { }
     }
     this.cb.state('off');
+    logEvent('rullo', 'riconnessione non riuscita');
     toast('Connessione al rullo persa. Tocca “Rullo” per ricollegarlo: l’allenamento continua a registrare.');
   }
   disconnect() { this.userClose = true; try { this.dev.gatt.disconnect(); } catch (e) { } this.cb.state('off'); }
@@ -975,7 +1097,7 @@ const trainerCb = {
     if (r.hr) L.trainerHr = r.hr;
     L.lastData = now;
   },
-  reconnected: () => { R.sent = null; toast('Rullo ricollegato'); }
+  reconnected: () => { R.sent = null; logEvent('rullo', 'ricollegato'); toast('Rullo ricollegato'); }
 };
 const hrCb = {
   state: s => { S.hrState = s; renderDevices(); },
@@ -985,8 +1107,8 @@ const hrCb = {
 function bluetoothMissing() {
   sheet(`<h2>Bluetooth non disponibile qui</h2>
     <p>Questo browser non permette alle pagine web di usare il Bluetooth.</p>
-    <p><b>Su iPhone:</b> installa l’app gratuita <b>Bluefy</b> dall’App Store e apri questo indirizzo da lì. Safari e Chrome per iPhone non supportano il Bluetooth web.</p>
-    <p><b>Su computer o Android:</b> usa Chrome o Edge.</p>
+    <p><b>Su Mac, PC e Android:</b> apri questo indirizzo con <b>Chrome</b> (o Edge). Su Mac non funziona con Safari.</p>
+    <p><b>Su iPhone e iPad:</b> installa l’app gratuita <b>Bluefy</b> dall’App Store e apri questo indirizzo da lì.</p>
     <div class="row"><button class="btn primary" id="tryDemo">Prova in modalità demo</button></div>`,
     { onMount: (el, close) => { el.querySelector('#tryDemo').onclick = () => { close(); connectDemo(); }; } });
 }
@@ -1000,12 +1122,44 @@ async function connectTrainer() {
     return;
   }
   if (!navigator.bluetooth) return bluetoothMissing();
+  if (store.get('connectedOnce', false)) return doConnectTrainer();
+  sheet(`<h2>Prima chiudi Zwift</h2>${ZWIFT_STEPS}
+    <div class="row"><button class="btn primary" id="goConn">Fatto, collega il rullo</button></div>`,
+    { onMount: (el, close) => { el.querySelector('#goConn').onclick = () => { close(); doConnectTrainer(); }; } });
+}
+const ZWIFT_STEPS = `<p>Il rullo parla con una sola app alla volta. Finché è collegato a Zwift, qui non compare.</p>
+  <ol class="steps">
+    <li><b>Chiudi Zwift sul computer</b>: esci del tutto dal programma, non basta ridurlo a icona.</li>
+    <li><b>Chiudi Zwift Companion sul telefono</b>, se la usi, e anche OneLap Fit.</li>
+    <li>Controlla che il rullo sia <b>acceso</b> (spina inserita) e dai due pedalate per svegliarlo.</li>
+  </ol>`;
+// collega davvero il rullo; restituisce true se riuscito
+async function doConnectTrainer() {
   const t = new BleTrainer(trainerCb);
-  try { await t.connect(); S.trainer = t; R.sent = null; toast(`${t.name} collegato`); }
-  catch (e) {
+  try {
+    await t.connect(); S.trainer = t; R.sent = null;
+    store.set('connectedOnce', true);
+    toast(`${t.name} collegato`);
+    return true;
+  } catch (e) {
     S.trainerState = 'off'; renderDevices();
-    if (e.name !== 'NotFoundError') toast('Collegamento non riuscito: ' + (e.message || e) + '. Verifica che il rullo sia acceso e non collegato ad altre app.');
+    logEvent('rullo', 'collegamento fallito: ' + e.name + ' ' + (e.message || ''));
+    connectHelp(e);
+    return false;
   }
+}
+function connectHelp(e) {
+  if (document.querySelector('.guide')) return;          // la guida iniziale mostra già l'aiuto
+  const cancelled = e && e.name === 'NotFoundError';
+  sheet(`<h2>${cancelled ? 'Il rullo non compare?' : 'Collegamento non riuscito'}</h2>
+    ${cancelled ? '' : `<p class="muted">${esc((e && e.message) || e)}</p>`}
+    ${ZWIFT_STEPS}
+    <p class="muted">Se ancora non va: spegni e riaccendi il Bluetooth del computer, oppure stacca e riattacca la spina del rullo.</p>
+    <div class="row"><button class="btn primary" id="retry">Riprova</button><button class="btn" id="hDemo">Prova in demo</button></div>`,
+    { onMount: (el, close) => {
+      el.querySelector('#retry').onclick = () => { close(); doConnectTrainer(); };
+      el.querySelector('#hDemo').onclick = () => { close(); connectDemo(); };
+    } });
 }
 function connectDemo() {
   if (S.trainer) S.trainer.disconnect();
@@ -1019,9 +1173,37 @@ async function connectHr() {
     return;
   }
   if (!navigator.bluetooth) return bluetoothMissing();
+  if (store.get('hrOnce', false)) return doConnectHr();
+  sheet(`<h2>Collega il COROS</h2>${COROS_STEPS}
+    <div class="row"><button class="btn primary" id="goHr">Fatto, collega il cardio</button></div>`,
+    { onMount: (el, close) => { el.querySelector('#goHr').onclick = () => { close(); doConnectHr(); }; } });
+}
+const COROS_STEPS = `<p>L’orologio può inviare i battiti all’app come una fascia cardio. Va bene anche una normale fascia Bluetooth.</p>
+  <ol class="steps">
+    <li><b>Spegni il Bluetooth del telefono</b> (o chiudi l’app COROS): l’orologio accetta un solo collegamento Bluetooth alla volta, e di solito è occupato dal telefono.</li>
+    <li>Sull’orologio, dal quadrante <b>tieni premuto il tasto Indietro</b>: si apre il menu degli strumenti.</li>
+    <li>Scegli <b>Trasmetti FC</b> (in inglese “Broadcast HR”) e lascia l’orologio su quella schermata.</li>
+    <li>Qui tocca il pulsante e scegli il COROS dall’elenco.</li>
+  </ol>`;
+async function doConnectHr() {
   const h = new BleHr(hrCb);
-  try { await h.connect(); S.hr = h; toast(`${h.name} collegato`); }
-  catch (e) { S.hrState = 'off'; renderDevices(); if (e.name !== 'NotFoundError') toast('Cardio non collegato: ' + (e.message || e)); }
+  try {
+    await h.connect(); S.hr = h;
+    store.set('hrOnce', true);
+    logEvent('cardio', 'collegato ' + h.name); toast(`${h.name} collegato`);
+    return true;
+  } catch (e) {
+    logEvent('cardio', 'collegamento fallito: ' + e.name + ' ' + (e.message || ''));
+    S.hrState = 'off'; renderDevices();
+    const cancelled = e.name === 'NotFoundError';
+    sheet(`<h2>${cancelled ? 'L’orologio non compare?' : 'Cardio non collegato'}</h2>
+      ${cancelled ? '' : `<p class="muted">${esc(e.message || e)}</p>`}
+      ${COROS_STEPS}
+      <p class="muted">L’allenamento funziona anche senza cardio: i battiti servono solo per le statistiche.</p>
+      <div class="row"><button class="btn primary" id="retryHr">Riprova</button></div>`,
+      { onMount: (el, close) => { el.querySelector('#retryHr').onclick = () => { close(); doConnectHr(); }; } });
+    return false;
+  }
 }
 
 /* ---------- Motore allenamento ---------- */
@@ -1077,6 +1259,8 @@ function startRide() {
   Object.assign(R, { state: 'running', ms: 0, sec: 0, start: Date.now(), dist: 0, stepIdx: -1, offset: 0, rescue: false, lowCad: 0, highCad: 0, wkDone: false, rampFtp: null, rampLow: 0, banner: null, sent: null,
     data: { t: [], p: [], c: [], h: [], v: [], d: [], g: [], st: [] } });
   R.lastTick = performance.now();
+  R.gapWarned = false;
+  logEvent('allenamento', `avvio: ${R.wk ? R.wk.name : 'libero'}, FTP ${S.profile.ftp}, ${R.mode}`);
   keepAwake(true);
   beep(660, 0.15);
   document.body.classList.add('riding');
@@ -1132,7 +1316,7 @@ function onSecond() {
     if (!R.rescue) {
       const struggling = hasCad ? c < 45 : p < tw * 0.4;
       R.lowCad = (struggling && tw >= 90 && ok) ? R.lowCad + 1 : 0;
-      if (R.lowCad >= 4) { R.rescue = true; R.highCad = 0; R.banner = { text: hasCad ? 'Cadenza troppo bassa: resistenza dimezzata. Torna sopra 70 rpm e i watt tornano all’obiettivo.' : 'Pedalata in calo: resistenza dimezzata. Riprendi ritmo e i watt tornano all’obiettivo.', kind: 'warn' }; }
+      if (R.lowCad >= 4) { logEvent('allenamento', 'protezione ERG attivata'); R.rescue = true; R.highCad = 0; R.banner = { text: hasCad ? 'Cadenza troppo bassa: resistenza dimezzata. Torna sopra 70 rpm e i watt tornano all’obiettivo.' : 'Pedalata in calo: resistenza dimezzata. Riprendi ritmo e i watt tornano all’obiettivo.', kind: 'warn' }; }
     } else {
       R.highCad = (hasCad ? c >= 70 : p >= Math.max(50, tw * 0.5) * 0.85) ? R.highCad + 1 : 0;
       if (R.highCad >= 3) { R.rescue = false; R.lowCad = 0; R.banner = null; toast('Watt obiettivo ripristinati'); }
@@ -1159,6 +1343,17 @@ function tick() {
     while (R.sec < Math.floor(R.ms / 1000) && guard++ < 10) { onSecond(); R.sec++; }
     if (R.sec < Math.floor(R.ms / 1000)) R.ms = R.sec * 1000;
   }
+  // sorveglianza: rullo collegato ma senza dati
+  if (R.state === 'running' && S.trainer && S.trainerState === 'on') {
+    const gap = now - S.live.lastData;
+    if (gap > 6000 && !R.gapWarned) {
+      R.gapWarned = true; logEvent('rullo', 'nessun dato da 6 s');
+      if (!R.banner) R.banner = { text: 'Il rullo non sta inviando dati. Se non riparte da solo, tocca “Rullo” in alto e ricollegalo: la registrazione continua.', kind: 'warn', gap: true };
+    } else if (gap < 3000 && R.gapWarned) {
+      R.gapWarned = false; logEvent('rullo', 'dati ripresi');
+      if (R.banner && R.banner.gap) R.banner = null;
+    }
+  }
   applyControl();
   const full = R.sec !== R._fullSec;
   R._fullSec = R.sec;
@@ -1184,7 +1379,7 @@ function resetRide() {
   document.body.classList.remove('riding');
   renderRide(true);
 }
-function saveRide() {
+async function saveRide() {
   if (!R.data || !R.data.t.length) { resetRide(); return; }
   const sess = {
     id: uid('s'), start: R.start, name: R.wk ? R.wk.name : 'Pedalata libera', ftp: S.profile.ftp,
@@ -1192,12 +1387,17 @@ function saveRide() {
     rampFtp: R.rampFtp ?? (R.wk && R.wk.rampTest ? Math.round((Core.bestAvg(R.data.p, 60) || 0) * 0.75) || null : null),
     data: R.data
   };
-  if (persistSession(sess)) { resetRide(); openSession(sess.id, true); renderHistory(); }
+  autosave();
+  if (await persistSession(sess)) {
+    logEvent('allenamento', `salvato ${fmtDur(sess.data.t.length)}`);
+    resetRide(); renderHistory(); await openSession(sess.id, true);
+  } else toast('Salvataggio non riuscito: l’allenamento resta recuperabile dallo Storico.');
 }
-function persistSession(sess) {
+async function persistSession(sess) {
   const sum = Core.summarize(sess, S.profile);
-  const idx = store.get('sessions', []);
-  if (!store.set('s.' + sess.id, sess)) return false;
+  if (!(await db.set('s.' + sess.id, sess))) return false;
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => { });
+  const idx = store.get('sessions', []).filter(s => s.id !== sess.id);
   idx.unshift({ id: sess.id, start: sess.start, name: sess.name, dur: sum.dur, dist: sum.dist, avgP: sum.avgP, np: sum.np, tss: sum.tss, avgH: sum.avgH });
   store.set('sessions', idx);
   return true;
@@ -1508,7 +1708,8 @@ const safeName = s => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 
 function importSheet() {
   sheet(`<h2>Importa allenamento</h2>
-    <p>Funziona con i file che esportano TrainingPeaks, intervals.icu, Zwift e la maggior parte delle piattaforme dei coach: <b>.zwo</b>, <b>.erg</b>, <b>.mrc</b>.</p>
+    <p><b>Da CoachPeaking:</b> dal computer apri l’allenamento nel calendario e premi “scarica file zwo”, poi sceglilo qui sotto.</p>
+    <p class="muted">Vanno bene anche i file .zwo, .erg e .mrc di TrainingPeaks, intervals.icu e Zwift. I watt vengono calcolati sulla tua FTP: tienila uguale a quella impostata dal coach.</p>
     <label class="btn primary file">Scegli file<input type="file" id="impFile" accept=".zwo,.erg,.mrc,.json,.xml,.txt,text/xml,application/xml,text/plain"></label>
     <p class="muted">Oppure incolla qui il contenuto del file (utile se il coach lo manda su WhatsApp o per mail):</p>
     <textarea id="impText" rows="6" placeholder="<workout_file> … oppure [COURSE HEADER] …"></textarea>
@@ -1610,7 +1811,7 @@ function renderHistory() {
       <div class="meta"><span>${fmtDur(s.dur)}</span><span>${fmt(s.avgP)} W medi</span><span>NP ${fmt(s.np)}</span><span>TSS ${fmt(s.tss)}</span>${s.avgH ? `<span>${fmt(s.avgH)} bpm</span>` : ''}</div></button>`).join('')
       : `<p class="empty">Ancora nessun allenamento. Il primo che salvi comparirà qui, con tutte le statistiche e il file da mandare al coach.</p>`);
   if ($('recSave')) {
-    $('recSave').onclick = () => { live.id = uid('s'); if (persistSession(live)) { store.del('live'); renderHistory(); toast('Allenamento recuperato'); } };
+    $('recSave').onclick = async () => { live.id = uid('s'); if (await persistSession(live)) { store.del('live'); R.banner = null; renderHistory(); toast('Allenamento recuperato'); } };
     $('recDrop').onclick = () => { if (confirm('Scartare l’allenamento non salvato?')) { store.del('live'); renderHistory(); } };
   }
 }
@@ -1638,8 +1839,8 @@ async function shareFile(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 30000);
   toast('File pronto: ' + name);
 }
-function openSession(id, justSaved) {
-  const sess = store.get('s.' + id, null);
+async function openSession(id, justSaved) {
+  const sess = await db.get('s.' + id);
   if (!sess) return toast('Allenamento non trovato');
   const sum = Core.summarize(sess, S.profile);
   const z = sum.zones, zt = z.reduce((a, b) => a + b, 0) || 1;
@@ -1674,9 +1875,9 @@ function openSession(id, justSaved) {
         try { if (navigator.share) { await navigator.share({ text }); return; } } catch (e) { if (e.name === 'AbortError') return; }
         try { await navigator.clipboard.writeText(text); toast('Riepilogo copiato: incollalo nella chat del coach'); } catch (e) { location.href = `https://wa.me/?text=${encodeURIComponent(text)}`; }
       };
-      el.querySelector('#delS').onclick = () => {
+      el.querySelector('#delS').onclick = async () => {
         if (!confirm('Eliminare questo allenamento dallo storico?')) return;
-        store.del('s.' + id); store.set('sessions', store.get('sessions', []).filter(s => s.id !== id));
+        await db.del('s.' + id); store.set('sessions', store.get('sessions', []).filter(s => s.id !== id));
         close(); renderHistory();
       };
       const sf = el.querySelector('#setFtp');
@@ -1694,6 +1895,10 @@ function renderProfile() {
   const lo = [0, 0.55, 0.75, 0.9, 1.05, 1.2, 1.5];
   $('pZones').innerHTML = Core.ZONES.map((z, i) => `<div class="pz"><i class="dot" style="background:${z.color}"></i><span>Z${i + 1} ${z.name}</span><em>${i === 6 ? `oltre ${Math.round(lo[i] * P.ftp)} W` : `${Math.round(lo[i] * P.ftp)}–${Math.round(z.max * P.ftp) - 1} W`}</em></div>`).join('');
   $('ver').textContent = 'Versione ' + APP_VERSION;
+  $('pInstall').hidden = !installEvt;
+  $('pSupport').innerHTML = `<div class="pz"><span>Bluetooth per rullo e cardio</span><em>${navigator.bluetooth ? 'disponibile' : 'non disponibile in questo browser'}</em></div>
+    <div class="pz"><span>Schermo sempre acceso</span><em>${'wakeLock' in navigator ? 'disponibile' : 'disattiva il blocco schermo a mano'}</em></div>
+    <div class="pz"><span>Allenamenti in archivio</span><em>${store.get('sessions', []).length}</em></div>`;
 }
 function bindProfile() {
   const save = () => {
@@ -1705,8 +1910,9 @@ function bindProfile() {
   };
   ['pName', 'pFtp', 'pW', 'pHr', 'pCoach', 'pMsg', 'pSound'].forEach(id => $(id).addEventListener('change', () => { save(); renderProfile(); }));
   $('pRamp').onclick = () => { if (R.state !== 'idle') return toast('Termina prima l’allenamento in corso'); loadWorkout('p-ramp'); };
-  $('pExport').onclick = () => {
-    const out = { app: 'rullo', v: 1, profile: S.profile, workouts: S.custom, sessions: store.get('sessions', []).map(s => store.get('s.' + s.id, null)).filter(Boolean) };
+  $('pExport').onclick = async () => {
+    const sessions = (await Promise.all(store.get('sessions', []).map(s => db.get('s.' + s.id)))).filter(Boolean);
+    const out = { app: 'rullo', v: 1, profile: S.profile, workouts: S.custom, sessions };
     shareFile(new Blob([JSON.stringify(out)], { type: 'application/json' }), `backup_rullo_${new Date().toISOString().slice(0, 10)}.json`);
   };
   $('pImport').onchange = async e => {
@@ -1718,14 +1924,24 @@ function bindProfile() {
       Object.assign(S.profile, o.profile); store.set('profile', S.profile);
       const ids = new Set(S.custom.map(w => w.id)); o.workouts.forEach(w => { if (!ids.has(w.id)) S.custom.push(w); }); store.set('workouts', S.custom);
       const have = new Set(store.get('sessions', []).map(s => s.id));
-      o.sessions.filter(s => !have.has(s.id)).sort((a, b) => a.start - b.start).forEach(persistSession);
+      for (const s of o.sessions.filter(s => s && s.id && s.data && !have.has(s.id)).sort((a, b) => a.start - b.start)) await persistSession(s);
       const idx = store.get('sessions', []).sort((a, b) => b.start - a.start); store.set('sessions', idx);
       toast('Backup importato'); renderProfile();
     } catch (err) { toast('Backup non valido: ' + err.message); }
     e.target.value = '';
   };
   $('pDemo').onclick = () => { connectDemo(); showView('ride'); };
+  const diagText = () => [`Rullo ${APP_VERSION}`, navigator.userAgent, `Bluetooth web: ${navigator.bluetooth ? 'sì' : 'no'}; schermo acceso: ${'wakeLock' in navigator ? 'sì' : 'no'}; archivio: ${db.usingIdb ? 'IndexedDB' : 'localStorage'}; installata: ${matchMedia('(display-mode: standalone)').matches ? 'sì' : 'no'}`, `Allenamenti salvati: ${store.get('sessions', []).length}`, '', ...LOG].join('\n');
+  $('pLogShow').onclick = () => sheet(`<h2>Registro diagnostico</h2><p class="muted">Gli ultimi eventi di collegamento e allenamento. Se qualcosa non va, condividilo.</p><pre class="log">${esc(diagText())}</pre>`, { wide: true });
+  $('pLogShare').onclick = () => shareFile(new Blob([diagText()], { type: 'text/plain' }), `registro_rullo_${new Date().toISOString().slice(0, 10)}.txt`);
+  $('pInstall').onclick = async () => {
+    if (!installEvt) return;
+    installEvt.prompt();
+    try { await installEvt.userChoice; } catch (e) { }
+    installEvt = null; $('pInstall').hidden = true;
+  };
   $('pWelcome').onclick = () => welcome('welcome');
+  $('pGuide').onclick = guide;
 }
 
 /* ---------- Benvenuto ---------- */
@@ -1751,10 +1967,81 @@ function welcome(kind = 'welcome') {
     store.set('welcomed', true);
     if (first) {
       if (!S.profile.name && WELCOME.name) { S.profile.name = WELCOME.name; store.set('profile', S.profile); }
-      showView('profile');
-      toast('Prima cosa: inserisci peso e FC massima. La FTP la trovi con il test a rampa.');
+      guide();
     }
   };
+}
+
+/* ---------- Guida al primo avvio ---------- */
+function guide() {
+  document.querySelectorAll('.guide').forEach(e => e.remove());
+  const ov = document.createElement('div');
+  ov.className = 'welcome guide';
+  ov.setAttribute('role', 'dialog'); ov.setAttribute('aria-modal', 'true');
+  document.body.appendChild(ov);
+  let step = 0, timer = null, err = null;
+  const hasBt = !!navigator.bluetooth;
+  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const done = () => { clearInterval(timer); ov.remove(); store.set('guided', true); showView('ride'); };
+  const connected = () => S.trainer && !S.trainer.isDemo && S.trainerState === 'on';
+  const fld = (id, label, val, type = 'number') => `<label class="fld"><span>${label}</span><input id="${id}" type="${type}" ${type === 'number' ? 'inputmode="numeric"' : 'autocomplete="given-name"'} value="${esc(val)}"></label>`;
+  const screens = [
+    () => `<h2>Dove la stai usando</h2>
+      ${hasBt ? `<p class="g-ok">Questo browser può collegarsi al rullo: sei a posto.</p>
+        <p class="muted">Usa sempre questo stesso dispositivo e questo stesso browser: gli allenamenti restano salvati qui.</p>`
+      : `<p class="g-warn">Questo browser non può usare il Bluetooth, quindi da qui il rullo non si collega.</p>
+        ${ios ? '<p><b>Su iPhone e iPad:</b> installa l’app gratuita <b>Bluefy</b> dall’App Store, aprila e incolla lì questo indirizzo.</p><p>In alternativa usa il computer con Chrome.</p>'
+              : '<p><b>Su computer (Windows o Mac) e su Android:</b> apri questo stesso indirizzo con <b>Chrome</b> o <b>Edge</b>.</p>'}
+        <p class="muted">Puoi comunque andare avanti e guardarti l’app in modalità demo.</p>`}
+      <div class="g-nav"><button class="btn primary big" data-go="1">Avanti</button></div>`,
+    () => `<h2>I tuoi dati</h2>
+      <p class="muted">Servono per calcolare zone e watt degli allenamenti. Li cambi quando vuoi dal Profilo.</p>
+      <div class="form">${fld('gName', 'Nome', S.profile.name, 'text')}${fld('gW', 'Peso (kg)', S.profile.weight)}${fld('gHr', 'FC massima (bpm)', S.profile.hrMax)}${fld('gFtp', 'FTP (watt)', S.profile.ftp)}</div>
+      <p class="muted">La FTP è la potenza che riesci a tenere per circa un’ora. Se il coach te l’ha data su CoachPeaking, metti quella. Se non la conosci lascia 150: la troverai con il test a rampa che c’è tra gli allenamenti.</p>
+      <div class="g-nav"><button class="btn big" data-go="0">Indietro</button><button class="btn primary big" data-go="2">Avanti</button></div>`,
+    () => `<h2>Chiudi Zwift, poi collega</h2>
+      ${ZWIFT_STEPS}
+      ${err ? `<p class="g-warn">${err}</p>` : ''}
+      <div class="g-nav"><button class="btn big" data-go="1">Indietro</button>${hasBt ? '<button class="btn primary big" id="gConn">Ho chiuso Zwift: collega</button>' : '<button class="btn primary big" id="gDemo">Continua in demo</button>'}</div>
+      <p class="g-skip"><button class="btn subtle" data-go="3">Lo collego dopo</button></p>`,
+    () => `<h2>${connected() ? 'Rullo collegato' : 'Tutto pronto'}</h2>
+      ${connected() ? `<p>Prova a pedalare: qui sotto devono comparire i watt.</p><div class="g-live"><b id="gPw">–</b><span>watt</span></div>
+        <p class="muted" id="gCtl">${S.trainer.canControl ? 'L’app può regolare la resistenza del rullo.' : 'Il rullo invia i dati ma non accetta comandi: chiudi le altre app e ricollegalo.'}</p>`
+      : `<p>${S.trainer && S.trainer.isDemo ? 'Sei in modalità demo: i dati sono simulati, così puoi provare tutto senza rullo.' : 'Quando vuoi collegare il rullo, tocca “Collega rullo” in alto nella schermata Allenati.'}</p>`}
+      <ol class="steps">
+        <li>In <b>Allenati</b> tocca “Scegli allenamento”, oppure pedala libera.</li>
+        <li>Tocca <b>Avvia</b>. In modalità ERG scegli tu i watt e il rullo si regola da solo: tieni 80–95 pedalate al minuto.</li>
+        <li>Alla fine tocca <b>Termina</b> e poi <b>Salva</b>: trovi statistiche e file per il coach nello Storico.</li>
+        <li>Per vedere anche i battiti, tocca <b>Collega cardio</b>: l’app ti spiega come usare il COROS.</li>
+      </ol>
+      <div class="g-nav"><button class="btn primary big" id="gEnd">Inizia</button></div>`
+  ];
+  const saveData = () => {
+    const P = S.profile, v = id => ov.querySelector('#' + id), n = (id, lo, hi, d) => { const x = parseFloat(v(id).value); return isFinite(x) ? clamp(Math.round(x), lo, hi) : d; };
+    if (!v('gName')) return;
+    P.name = v('gName').value.trim(); P.weight = n('gW', 30, 150, P.weight); P.hrMax = n('gHr', 120, 230, P.hrMax); P.ftp = n('gFtp', 40, 600, P.ftp);
+    store.set('profile', P);
+  };
+  const show = () => {
+    clearInterval(timer);
+    ov.innerHTML = `<div class="w-in"><div class="g-dots">${screens.map((_, i) => `<i class="${i === step ? 'on' : i < step ? 'done' : ''}"></i>`).join('')}</div><p class="g-count">Passo ${step + 1} di ${screens.length}</p>${screens[step]()}</div>`;
+    ov.scrollTop = 0;
+    ov.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { saveData(); err = null; step = +b.dataset.go; show(); });
+    const c = ov.querySelector('#gConn');
+    if (c) c.onclick = async () => {
+      c.disabled = true; c.textContent = 'Scegli il rullo nell’elenco…';
+      const ok = await doConnectTrainer();
+      if (ok) { err = null; step = 3; }
+      else err = 'Collegamento non riuscito. Se nell’elenco il rullo non compariva, quasi sempre è ancora agganciato a Zwift: chiudilo del tutto (anche Zwift Companion sul telefono) e riprova.';
+      show();
+    };
+    const d = ov.querySelector('#gDemo');
+    if (d) d.onclick = () => { connectDemo(); step = 3; show(); };
+    const e = ov.querySelector('#gEnd');
+    if (e) e.onclick = done;
+    if (ov.querySelector('#gPw')) timer = setInterval(() => { const el = ov.querySelector('#gPw'); if (!el) return clearInterval(timer); const p = livePower(); el.textContent = p == null ? '–' : Math.round(p); }, 500);
+  };
+  show();
 }
 function maybeWelcome() {
   const d = new Date(), md = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -1762,8 +2049,33 @@ function maybeWelcome() {
   else if (WELCOME.birthday === md && !store.get('bday-' + d.getFullYear(), false)) welcome('birthday');
 }
 
+/* ---------- App installabile e scorciatoie ---------- */
+let installEvt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; const b = $('pInstall'); if (b) b.hidden = false; });
+function registerSW() {
+  const local = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  if ('serviceWorker' in navigator && (location.protocol === 'https:' || local)) {
+    navigator.serviceWorker.register('sw.js').catch(e => logEvent('app', 'service worker: ' + e.message));
+  }
+}
+function bindKeys() {
+  document.addEventListener('keydown', e => {
+    if (e.target.closest('input,textarea,select') || document.querySelector('.sheet-wrap,.welcome') || $('v-ride').hidden) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.code === 'Space' && e.target.closest('button,a,label')) return;
+    const click = sel => { const b = document.querySelector(sel); if (b && !b.hidden && !b.closest('[hidden]')) { b.click(); e.preventDefault(); } };
+    if (e.code === 'Space') click(R.state === 'idle' ? '#bStart' : R.state === 'running' ? '#bPause' : '#bResume');
+    else if (e.key === 'ArrowUp') click($('adjSim').hidden ? '[data-erg="5"]' : '[data-grade="0.5"]');
+    else if (e.key === 'ArrowDown') click($('adjSim').hidden ? '[data-erg="-5"]' : '[data-grade="-0.5"]');
+    else if (e.key === 'ArrowRight' && !$('adjSim').hidden) click('[data-gear="1"]');
+    else if (e.key === 'ArrowLeft' && !$('adjSim').hidden) click('[data-gear="-1"]');
+  });
+}
+
 /* ---------- Avvio ---------- */
 function init() {
+  logEvent('app', `avvio ${APP_VERSION}`);
+  registerSW(); bindKeys(); migrateSessions();
   document.querySelector('.tabs').onclick = e => { const b = e.target.closest('button'); if (b) showView(b.dataset.v); };
   $('wkNew').onclick = () => builder(null);
   $('wkImport').onclick = importSheet;
