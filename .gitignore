@@ -1,0 +1,5 @@
+index_t.html
+__pycache__/
+src/test/*.png
+src/test/*.fit
+src/test/backup*.json
