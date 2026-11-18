@@ -1,0 +1,11 @@
+<workout_file>
+  <author>Coach</author>
+  <name>Soglia 3x8 coach</name>
+  <sportType>bike</sportType>
+  <workout>
+    <Warmup Duration="600" PowerLow="0.45" PowerHigh="0.75"/>
+    <IntervalsT Repeat="3" OnDuration="480" OffDuration="240" OnPower="1.0" OffPower="0.55" Cadence="90"/>
+    <SteadyState Duration="300" Power="0.65"/>
+    <Cooldown Duration="300" PowerLow="0.6" PowerHigh="0.4"/>
+  </workout>
+</workout_file>

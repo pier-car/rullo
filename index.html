@@ -45,6 +45,7 @@ p{margin:6px 0 10px}
 .muted{color:var(--ink2)}
 .view{padding:12px 14px calc(var(--tabh) + 20px);max-width:760px;margin:0 auto}
 .view[hidden]{display:none!important}
+.section[hidden]{display:none!important}
 
 /* ---------- Allenati ---------- */
 #v-ride{display:flex;flex-direction:column;gap:6px;min-height:calc(100dvh - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px))}
@@ -374,6 +375,7 @@ body.riding #toast{bottom:calc(18px + env(safe-area-inset-bottom,0px))}
       <li>Su iPhone disattiva il blocco automatico dello schermo (Impostazioni › Schermo e luminosità).</li>
     </ol>
   </div>
+  <div class="section" hidden><h3>Coach · CoachPeaking</h3><div id="pStrava"></div></div>
   <div class="section"><h3>Diagnostica</h3>
     <div id="pSupport"></div>
     <p class="muted">Se il rullo non si collega o si comporta in modo strano, il registro dice cosa è successo.</p>
@@ -788,7 +790,13 @@ Collega il rullo, scegli cosa fare e pedala. Al resto pensa lei.`,
 Oggi l’allenamento migliore è quello che hai voglia di fare.`
 };
 /* ==================================================== */
-const APP_VERSION = '2.2';
+/* ============ COLLEGAMENTO A STRAVA (per CoachPeaking) ============
+   Serve per mandare in automatico l'allenamento al coach. Lascia vuoto per disattivarlo.
+   workerUrl: indirizzo del servizio su Cloudflare (vedi STRAVA_SETUP.md)
+   clientId:  l'ID dell'app Strava creata dall'atleta */
+const STRAVA = { workerUrl: '', clientId: '' };
+/* ================================================================ */
+const APP_VERSION = '2.3';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -962,7 +970,12 @@ class BleTrainer {
     try { svc = await srv.getPrimaryService(U.ftms); } catch (e) { }
     if (svc) {
       const bd = await svc.getCharacteristic(U.bikeData);
-      bd.addEventListener('characteristicvaluechanged', e => this.cb.data(Core.parseIndoorBikeData(e.target.value)));
+      this.st = { n: 0, cadFlag: 0, cadNz: 0, t0: 0, rep: 0 };
+      bd.addEventListener('characteristicvaluechanged', e => {
+        const dv = e.target.value, r = Core.parseIndoorBikeData(dv);
+        this.noteFrame(dv, r);
+        this.cb.data(r);
+      });
       await bd.startNotifications();
       try { this.features = Core.parseFeatures(await (await svc.getCharacteristic(U.feature)).readValue()); } catch (e) { }
       try { this.range = Core.parsePowerRange(await (await svc.getCharacteristic(U.powerRange)).readValue()); } catch (e) { }
@@ -974,6 +987,20 @@ class BleTrainer {
         await this.write(Core.cmd.start()).catch(() => { });
         this.canControl = true;
       } catch (e) { this.canControl = false; logEvent('rullo', 'controllo negato: ' + e.message + (e.code ? ' cod.' + e.code : '')); toast('Il rullo invia i dati ma non accetta comandi: ' + e.message); }
+      // alcuni rulli mandano la cadenza solo nel servizio di potenza: lo ascolto in più, solo per la cadenza
+      try {
+        const cs = await srv.getPrimaryService(U.cps);
+        const ch = await cs.getCharacteristic(U.cpsMeas);
+        const parse = Core.makeCpsParser();
+        let first = true;
+        ch.addEventListener('characteristicvaluechanged', e => {
+          const r = parse(e.target.value, performance.now());
+          if (first) { first = false; logEvent('rullo', `servizio potenza (CPS) presente: flag 0x${e.target.value.getUint16(0, true).toString(16)}, cadenza ${r.cadence != null ? 'sì' : 'no'}`); }
+          if (r.cadence != null) this.cb.cad2(r.cadence);
+        });
+        await ch.startNotifications();
+        this.hasCps = true;
+      } catch (e) { this.hasCps = false; }
     } else {
       const cs = await srv.getPrimaryService(U.cps);
       const ch = await cs.getCharacteristic(U.cpsMeas);
@@ -982,8 +1009,25 @@ class BleTrainer {
       await ch.startNotifications();
       this.canControl = false;
     }
+    try { const all = await srv.getPrimaryServices(); logEvent('rullo', 'servizi: ' + all.map(x => x.uuid.slice(4, 8)).join(', ')); } catch (e) { logEvent('rullo', 'servizi non leggibili: ' + e.message); }
     logEvent('rullo', `collegato (${svc ? 'FTMS' : 'solo potenza'}), controllo ${this.canControl ? 'sì' : 'no'}, funzioni ${JSON.stringify(this.features)}, potenza ${JSON.stringify(this.range)}`);
     this.cb.state('on');
+  }
+  // statistiche dei pacchetti FTMS: servono a capire se il rullo manda la cadenza
+  noteFrame(dv, r) {
+    const st = this.st; if (!st) return;
+    const now = performance.now(); st.n++;
+    if (st.n === 1) {
+      st.t0 = now;
+      logEvent('rullo', `primo pacchetto dati: ${[...new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength)].map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+    }
+    if (dv.byteLength >= 2 && (dv.getUint16(0, true) & 4)) st.cadFlag++;
+    if (r.cadence > 0) st.cadNz++;
+    const mins = (now - st.t0) / 60000;
+    if (st.rep === 0 && mins >= 1 || st.rep === 1 && mins >= 10) {
+      st.rep++;
+      logEvent('rullo', `dopo ${Math.round(mins)} min: ${st.n} pacchetti, con campo cadenza ${st.cadFlag}, cadenza > 0 ${st.cadNz}`);
+    }
   }
   write(bytes) {
     const run = async () => {
@@ -1092,10 +1136,16 @@ const trainerCb = {
   data: r => {
     const L = S.live, now = performance.now();
     if (r.power != null) { L.power = r.power; L.buf.push([now, r.power]); }
-    if (r.cadence != null) { L.cad = r.cadence; if (r.cadence > 0) L.cadSeen = true; }
+    if (r.cadence != null) { L.cad = r.cadence; if (r.cadence > 0) { L.cadSeen = true; L.ftmsCad = now; } }
     if (r.speed != null) L.speed = r.speed;
     if (r.hr) L.trainerHr = r.hr;
     L.lastData = now;
+  },
+  // cadenza dal servizio di potenza: vale solo se il flusso principale non la dà
+  cad2: c => {
+    const L = S.live, now = performance.now();
+    if (L.ftmsCad && now - L.ftmsCad < 5000) return;
+    L.cad = c; if (c > 0) L.cadSeen = true;
   },
   reconnected: () => { R.sent = null; logEvent('rullo', 'ricollegato'); toast('Rullo ricollegato'); }
 };
@@ -1260,6 +1310,7 @@ function startRide() {
     data: { t: [], p: [], c: [], h: [], v: [], d: [], g: [], st: [] } });
   R.lastTick = performance.now();
   R.gapWarned = false;
+  if (R.wk && R.mode !== 'erg') { R.mode = 'erg'; R.sent = null; logEvent('modalità', 'passata a ERG all’avvio (allenamento caricato)'); toast('Modalità ERG attivata per seguire i watt dell’allenamento'); }
   logEvent('allenamento', `avvio: ${R.wk ? R.wk.name : 'libero'}, FTP ${S.profile.ftp}, ${R.mode}`);
   keepAwake(true);
   beep(660, 0.15);
@@ -1328,6 +1379,7 @@ function endRampTest() {
   const best = Core.bestAvg(R.data.p, 60);
   R.rampFtp = best ? Math.round(best * 0.75) : null;
   R.mode = 'sim'; R.grade = 0; R.gear = 4; R.sent = null;
+  logEvent('modalità', 'test FTP finito: passata a pendenza');
   beep(1175, 0.6);
   R.banner = { text: R.rampFtp ? `Test finito. FTP stimata: ${R.rampFtp} W. Pedala piano qualche minuto, poi tocca Termina.` : 'Test finito: dati insufficienti per stimare la FTP.', kind: 'ok' };
   R.ms = Math.max(R.ms, (Core.totalDur(R.wk.steps)) * 1000);
@@ -1390,7 +1442,9 @@ async function saveRide() {
   autosave();
   if (await persistSession(sess)) {
     logEvent('allenamento', `salvato ${fmtDur(sess.data.t.length)}`);
+    const toStrava = Strava.enqueue(sess.id);
     resetRide(); renderHistory(); await openSession(sess.id, true);
+    if (toStrava) Strava.sync();
   } else toast('Salvataggio non riuscito: l’allenamento resta recuperabile dallo Storico.');
 }
 async function persistSession(sess) {
@@ -1638,7 +1692,7 @@ function bindRide() {
   $('devTrainer').onclick = connectTrainer;
   $('devHr').onclick = connectHr;
   $('pickWorkout').onclick = pickWorkoutSheet;
-  $('modeSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; R.mode = b.dataset.mode; R.sent = null; renderRide(true); };
+  $('modeSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; if (R.mode !== b.dataset.mode) logEvent('modalità', `${R.mode} → ${b.dataset.mode}${R.state !== 'idle' ? ' durante l’allenamento (' + fmtDur(R.sec) + ')' : ''}`); R.mode = b.dataset.mode; R.sent = null; renderRide(true); };
   const adj = (fn) => () => { fn(); R.sent = null; renderRide(true); };
   document.querySelectorAll('[data-erg]').forEach(b => b.onclick = adj(() => { const d = +b.dataset.erg; if (R.wk) R.offset = clamp(R.offset + d, -300, 300); else R.ergW = clamp(R.ergW + d, 0, maxW()); }));
   document.querySelectorAll('[data-int]').forEach(b => b.onclick = adj(() => { R.intensity = clamp(R.intensity + +b.dataset.int, 50, 150); }));
@@ -1863,10 +1917,12 @@ async function openSession(id, justSaved) {
     <h3>Condividi</h3>
     <p class="muted">Il file .FIT si carica su Strava, intervals.icu, TrainingPeaks, Garmin Connect e COROS Training Hub, con potenza, cadenza, cardio e blocchi.</p>
     <div class="row"><button class="btn primary" id="shFit">File .FIT</button><button class="btn" id="shTxt">Messaggio per il coach</button></div>
+    <div id="sStrava"></div>
     <div class="row"><button class="btn danger subtle" id="delS">Elimina allenamento</button></div>`, {
     wide: true,
     onMount: (el, close) => {
       drawSessionChart(el.querySelector('#sChart'), sess, sum);
+      Strava.mountSession(el.querySelector('#sStrava'), id);
       el.querySelector('#shFit').onclick = () => shareFile(new Blob([Core.buildFit(sess, sum)], { type: 'application/octet-stream' }), `${new Date(sess.start).toISOString().slice(0, 10)}_${safeName(sess.name)}.fit`);
       el.querySelector('#shTxt').onclick = async () => {
         const text = coachText(sess, sum);
@@ -1886,6 +1942,168 @@ async function openSession(id, justSaved) {
   });
 }
 
+/* ---------- Strava → CoachPeaking ---------- */
+const Strava = (() => {
+  const enabled = () => !!(STRAVA.workerUrl && STRAVA.clientId);
+  const base = () => STRAVA.workerUrl.replace(/\/+$/, '');
+  const acct = () => store.get('strava', null);
+  const done = () => store.get('strava.done', {});
+  const queue = () => store.get('strava.q', []);
+  const redirect = () => location.origin + location.pathname.replace(/index\.html$/, '');
+  const netErr = e => e instanceof TypeError;
+  let busy = false, retryT = null, mounted = null, last = null;
+
+  function connect() {
+    if (!enabled()) return toast('Il collegamento a Strava non è configurato');
+    const nonce = uid('n'); store.set('strava.nonce', nonce);
+    const u = new URL('https://www.strava.com/oauth/authorize');
+    u.search = new URLSearchParams({ client_id: STRAVA.clientId, redirect_uri: redirect(), response_type: 'code', approval_prompt: 'auto', scope: 'activity:write', state: nonce }).toString();
+    logEvent('strava', 'avvio collegamento');
+    location.href = u.toString();
+  }
+  async function post(path, body) {
+    const r = await fetch(base() + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(d.detail || d.error || 'errore ' + r.status); e.status = r.status; throw e; }
+    return d;
+  }
+  async function handleRedirect() {
+    const q = new URLSearchParams(location.search);
+    if (!q.has('state') || !(q.has('code') || q.has('error'))) return;
+    const clean = () => { try { history.replaceState(null, '', redirect()); } catch (e) { } };
+    const mine = q.get('state') === store.get('strava.nonce', null);
+    if (!mine) return;
+    store.del('strava.nonce'); clean();
+    if (q.get('error')) { logEvent('strava', 'autorizzazione negata'); toast('Collegamento a Strava annullato'); return; }
+    if (!(q.get('scope') || '').includes('activity:write')) { toast('Per caricare gli allenamenti serve lasciare spuntata la scrittura delle attività. Riprova.'); return; }
+    try {
+      const d = await post('/token', { code: q.get('code') });
+      const name = d.athlete ? [d.athlete.firstname, d.athlete.lastname].filter(Boolean).join(' ') : '';
+      store.set('strava', { access: d.access_token, refresh: d.refresh_token, exp: d.expires_at, name, auto: true });
+      logEvent('strava', 'collegato');
+      // gli allenamenti degli ultimi 3 giorni non ancora inviati partono subito
+      const dn = done(), recent = store.get('sessions', []).filter(s => Date.now() - s.start < 3 * 86400000 && !dn[s.id]).map(s => s.id);
+      if (recent.length) { store.set('strava.q', [...new Set([...queue(), ...recent])]); toast(`Strava collegato. Invio ${recent.length === 1 ? 'l’allenamento recente' : 'gli allenamenti recenti'}…`); }
+      else toast('Strava collegato');
+    } catch (e) { logEvent('strava', 'collegamento fallito: ' + e.message); toast('Collegamento a Strava non riuscito: ' + e.message); }
+  }
+  async function token() {
+    const a = acct(); if (!a) throw new Error('Strava non collegato');
+    if (a.exp - 120 > Date.now() / 1000) return a.access;
+    let d;
+    try { d = await post('/refresh', { refresh_token: a.refresh }); }
+    catch (e) { if (e.status === 400 || e.status === 401) { e.auth = true; e.message = 'Strava non autorizza più l’app: ricollegalo dal Profilo'; } throw e; }
+    Object.assign(a, { access: d.access_token, refresh: d.refresh_token, exp: d.expires_at, bad: false }); store.set('strava', a);
+    return a.access;
+  }
+  async function sendOne(id) {
+    const sess = await db.get('s.' + id);
+    if (!sess || !sess.data) return 'gone';
+    if (sess.data.t.length < 120) return 'short';
+    const fit = Core.buildFit(sess, Core.summarize(sess, S.profile));
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const tk = await token();
+      const fd = new FormData();
+      fd.append('file', new Blob([fit], { type: 'application/octet-stream' }), 'rullo.fit');
+      fd.append('name', sess.name); fd.append('trainer', '1'); fd.append('external_id', 'rullo-' + sess.id);
+      const r = await fetch(base() + '/upload', { method: 'POST', headers: { Authorization: 'Bearer ' + tk }, body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (r.status === 401 && attempt === 0) { const a = acct(); a.exp = 0; store.set('strava', a); continue; }
+      if (r.status === 401) { const e = new Error('Strava non autorizza più l’app: ricollegalo dal Profilo'); e.auth = true; throw e; }
+      if (r.status === 429) throw new Error('Strava ha troppe richieste: riprovo più tardi');
+      if (!r.ok || !d.id) throw new Error(d.message || d.error || 'errore ' + r.status);
+      let up = d;
+      for (let i = 0; i < 8 && !up.activity_id && !up.error; i++) {
+        await sleep(2500);
+        const s2 = await fetch(`${base()}/status?id=${d.id}`, { headers: { Authorization: 'Bearer ' + tk } }).catch(() => null);
+        if (s2 && s2.ok) up = await s2.json().catch(() => up);
+      }
+      if (up.error) {
+        if (/duplicate/i.test(up.error)) return { u: d.id, a: (up.error.match(/activity (\d+)/) || [])[1] || null, dup: true };
+        throw new Error(up.error);
+      }
+      return { u: d.id, a: up.activity_id || null };
+    }
+  }
+  function enqueue(id) {
+    const a = acct();
+    if (!enabled() || !a || !a.auto || done()[id]) return false;
+    const q = queue(); if (!q.includes(id)) { q.push(id); store.set('strava.q', q); }
+    return true;
+  }
+  async function sync({ quiet } = {}) {
+    const a = acct();
+    if (busy || !enabled() || !a || a.bad || !queue().length) return;
+    busy = true; render();
+    try {
+      for (const id of queue().slice()) {
+        try {
+          const res = await sendOne(id);
+          store.set('strava.q', queue().filter(x => x !== id));
+          if (res === 'gone' || res === 'short') { logEvent('strava', `saltato ${id}: ${res === 'short' ? 'troppo breve' : 'non trovato'}`); continue; }
+          const dn = done(); dn[id] = { u: res.u, a: res.a, t: Date.now(), dup: !!res.dup }; store.set('strava.done', dn);
+          last = { ok: true, t: Date.now() };
+          logEvent('strava', `inviato ${id}${res.dup ? ' (già presente)' : ''}${res.a ? ', attività ' + res.a : ', in elaborazione'}`);
+          toast(res.dup ? 'Già presente su Strava' : 'Allenamento inviato a Strava: arriverà a CoachPeaking tra pochi minuti');
+        } catch (e) {
+          const off = netErr(e);
+          last = { ok: false, msg: off ? 'nessuna connessione' : e.message, t: Date.now() };
+          logEvent('strava', `invio fallito ${id}: ${off ? 'rete' : e.message}`);
+          if (e.auth) { const b = acct(); b.bad = true; store.set('strava', b); }
+          if (!quiet || !off) toast(off ? 'Nessuna connessione: l’allenamento resta in coda e parte appena torna la rete' : 'Invio a Strava non riuscito: ' + e.message);
+          if (!e.auth) { clearTimeout(retryT); retryT = setTimeout(() => sync({ quiet: true }), 120000); }
+          break;
+        }
+      }
+    } finally { busy = false; render(); }
+  }
+  function disconnect() {
+    store.del('strava'); store.del('strava.q'); last = null;
+    logEvent('strava', 'scollegato'); render();
+  }
+  function setAuto(v) { const a = acct(); if (a) { a.auto = v; store.set('strava', a); } }
+
+  // --- schermate ---
+  function renderProfileBox() {
+    const el = $('pStrava'); if (!el) return;
+    const box = el.closest('.section'); if (box) box.hidden = !enabled();
+    if (!enabled()) return;
+    const a = acct(), q = queue().length;
+    if (!a || a.bad) {
+      el.innerHTML = `<p class="muted">${a && a.bad ? 'Strava non risponde più: ricollegalo per riprendere l’invio.' : 'Appena salvi un allenamento, l’app lo manda a Strava e da lì arriva a CoachPeaking, così il coach lo vede senza che tu faccia altro.'}</p>
+        <div class="row"><button class="btn primary" id="stConnect">${a && a.bad ? 'Ricollega Strava' : 'Collega Strava'}</button></div>
+        <p class="muted">Serve anche che Strava sia collegato su CoachPeaking (Calendario › menu › Account › Connessioni).</p>`;
+    } else {
+      el.innerHTML = `<div class="pz"><span>Strava</span><em>collegato${a.name ? ' · ' + esc(a.name) : ''}</em></div>
+        <label class="switch"><input id="stAuto" type="checkbox" ${a.auto ? 'checked' : ''}> Invia in automatico a fine allenamento</label>
+        ${q ? `<p class="muted">In coda: ${q} ${q === 1 ? 'allenamento' : 'allenamenti'}${last && !last.ok ? ' · ' + esc(last.msg) : ''}</p><div class="row"><button class="btn" id="stNow" ${busy ? 'disabled' : ''}>${busy ? 'Invio in corso…' : 'Invia ora'}</button></div>` : `<p class="muted">${last && last.ok ? 'Ultimo invio riuscito.' : 'Niente in coda.'}</p>`}
+        <div class="row"><button class="btn subtle" id="stOff">Scollega</button></div>`;
+    }
+    const on = (id, fn) => { const b = el.querySelector('#' + id); if (b) b.onclick = fn; };
+    on('stConnect', connect); on('stNow', () => sync()); on('stOff', () => { if (confirm('Scollegare Strava? Gli allenamenti non verranno più inviati.')) disconnect(); });
+    const au = el.querySelector('#stAuto'); if (au) au.onchange = () => setAuto(au.checked);
+  }
+  function mountSession(el, id) {
+    mounted = { el, id };
+    const a = acct();
+    if (!enabled() || !el) { if (el) el.innerHTML = ''; return; }
+    const d = done()[id], inQ = queue().includes(id);
+    let html;
+    if (!a || a.bad) html = `<p class="muted">Per mandare gli allenamenti al coach collega Strava dal Profilo.</p>`;
+    else if (d) html = `<p><b>Su Strava ✓</b> <span class="muted">inviato ${new Date(d.t).toLocaleString('it-IT', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}. Arriva a CoachPeaking in pochi minuti.</span></p>`;
+    else if (inQ) html = `<p><b>${busy ? 'Invio a Strava…' : 'In coda per Strava'}</b>${last && !last.ok ? ` <span class="muted">${esc(last.msg)}</span>` : ''}</p><div class="row"><button class="btn" id="stSend" ${busy ? 'disabled' : ''}>Invia ora</button></div>`;
+    else html = `<div class="row"><button class="btn" id="stSend">Invia a Strava</button></div>`;
+    el.innerHTML = `<h3>Coach (Strava → CoachPeaking)</h3>${html}`;
+    const b = el.querySelector('#stSend');
+    if (b) b.onclick = () => { enqueue(id) || (() => { const q = queue(); if (!q.includes(id)) { q.push(id); store.set('strava.q', q); } })(); sync(); mountSession(el, id); };
+  }
+  function render() {
+    renderProfileBox();
+    if (mounted && mounted.el.isConnected) mountSession(mounted.el, mounted.id);
+  }
+  return { enabled, connect, handleRedirect, enqueue, sync, render, mountSession, acct, queue };
+})();
+
 /* ---------- UI: Profilo ---------- */
 function renderProfile() {
   const P = S.profile;
@@ -1895,6 +2113,7 @@ function renderProfile() {
   const lo = [0, 0.55, 0.75, 0.9, 1.05, 1.2, 1.5];
   $('pZones').innerHTML = Core.ZONES.map((z, i) => `<div class="pz"><i class="dot" style="background:${z.color}"></i><span>Z${i + 1} ${z.name}</span><em>${i === 6 ? `oltre ${Math.round(lo[i] * P.ftp)} W` : `${Math.round(lo[i] * P.ftp)}–${Math.round(z.max * P.ftp) - 1} W`}</em></div>`).join('');
   $('ver').textContent = 'Versione ' + APP_VERSION;
+  Strava.render();
   $('pInstall').hidden = !installEvt;
   $('pSupport').innerHTML = `<div class="pz"><span>Bluetooth per rullo e cardio</span><em>${navigator.bluetooth ? 'disponibile' : 'non disponibile in questo browser'}</em></div>
     <div class="pz"><span>Schermo sempre acceso</span><em>${'wakeLock' in navigator ? 'disponibile' : 'disattiva il blocco schermo a mano'}</em></div>
@@ -2086,6 +2305,8 @@ function init() {
   if (store.get('live', null)) R.banner = { text: 'C’è un allenamento non salvato: lo trovi in Storico.', kind: 'warn' };
   showView('ride');
   maybeWelcome();
+  Strava.handleRedirect().then(() => { Strava.render(); Strava.sync({ quiet: true }); });
+  window.addEventListener('online', () => Strava.sync({ quiet: true }));
   setInterval(tick, 250);
   window.addEventListener('resize', () => renderRide(true));
   window.addEventListener('beforeunload', e => { if (R.state !== 'idle') { autosave(); e.preventDefault(); e.returnValue = ''; } });
