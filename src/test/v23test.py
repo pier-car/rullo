@@ -94,7 +94,7 @@ async def main():
         ctx, pg, errs = await fresh(b)
         await boot(pg, 'http://localhost:8765/index.html'); await pg.evaluate("showView('profile')")
         ok('senza config: sezione Strava nascosta', await pg.evaluate("document.querySelector('#pStrava').closest('.section').hidden") is True)
-        ok('versione 2.3', 'Versione 2.3' in await pg.inner_text('#ver'))
+        ver = re.search(r"APP_VERSION = '([^']+)'", src).group(1); ok('versione ' + ver, 'Versione ' + ver in await pg.inner_text('#ver'))
         await ctx.close()
 
         # --- 2) collegamento, sessione recente inviata

@@ -1,5 +1,5 @@
 /* Service worker: l'app si apre anche senza rete e si aggiorna da sola quando la rete c'è. */
-const CACHE = 'rullo-v2.3';
+const CACHE = 'rullo-v2.4';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'icon-180.png'];
 
 self.addEventListener('install', e => {

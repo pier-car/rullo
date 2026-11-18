@@ -5,7 +5,7 @@ const Core = (() => {
   /* ---------- Bluetooth FTMS / CPS / HR ---------- */
   const UUID = {
     ftms: 0x1826, bikeData: 0x2AD2, control: 0x2AD9, feature: 0x2ACC, status: 0x2ADA, powerRange: 0x2AD8,
-    cps: 0x1818, cpsMeas: 0x2A63, hrs: 0x180D, hrMeas: 0x2A37
+    cps: 0x1818, cpsMeas: 0x2A63, hrs: 0x180D, hrMeas: 0x2A37, csc: 0x1816, cscMeas: 0x2A5B
   };
 
   function parseIndoorBikeData(dv) {
@@ -34,8 +34,23 @@ const Core = (() => {
     return dv.getUint8(1);
   }
 
-  function makeCpsParser() {
+  // cadenza dai giri di pedivella cumulativi (contatore a 16 bit, tempo in 1/1024 s)
+  function makeCrank() {
     let lastRev = null, lastTime = null, cad = 0, lastChange = 0;
+    return (rev, t, now) => {
+      if (lastRev !== null) {
+        const dr = (rev - lastRev + 65536) % 65536;
+        const dt = ((t - lastTime + 65536) % 65536) / 1024;
+        if (dr > 0 && dt > 0 && dr < 20) { cad = Math.min(200, dr / dt * 60); lastChange = now; }
+        else if (now - lastChange > 3000) cad = 0;
+      } else lastChange = now;
+      lastRev = rev; lastTime = t;
+      return cad;
+    };
+  }
+
+  function makeCpsParser() {
+    const crank = makeCrank();
     return (dv, now) => {
       const r = {};
       if (dv.byteLength < 4) return r;
@@ -45,19 +60,31 @@ const Core = (() => {
       if (f & 0x01) o += 1;
       if (f & 0x04) o += 2;
       if (f & 0x10) o += 6;
-      if ((f & 0x20) && o + 4 <= dv.byteLength) {
-        const rev = dv.getUint16(o, true), t = dv.getUint16(o + 2, true);
-        if (lastRev !== null) {
-          const dr = (rev - lastRev + 65536) % 65536;
-          const dt = ((t - lastTime + 65536) % 65536) / 1024;
-          if (dr > 0 && dt > 0) { cad = Math.min(200, dr / dt * 60); lastChange = now; }
-          else if (now - lastChange > 3000) cad = 0;
-        }
-        lastRev = rev; lastTime = t; r.cadence = cad;
-      }
+      if ((f & 0x20) && o + 4 <= dv.byteLength) r.cadence = crank(dv.getUint16(o, true), dv.getUint16(o + 2, true), now);
       return r;
     };
   }
+
+  // sensore di cadenza Bluetooth (Cycling Speed and Cadence, 0x2A5B)
+  function makeCscParser() {
+    const crank = makeCrank();
+    return (dv, now) => {
+      const r = {};
+      if (dv.byteLength < 1) return r;
+      const f = dv.getUint8(0);
+      let o = 1;
+      if (f & 0x01) o += 6;                       // giri ruota (32 bit) + tempo
+      if ((f & 0x02) && o + 4 <= dv.byteLength) r.cadence = crank(dv.getUint16(o, true), dv.getUint16(o + 2, true), now);
+      return r;
+    };
+  }
+
+  /* ---------- Cadenza stimata dalla velocità del volano ----------
+     Con la Zwift Cog il pignone è uno solo: la velocità che il rullo manda segue le pedalate
+     con un rapporto fisso (corona/pignone). rpm = km/h × k. */
+  const COG_TEETH = 14, WHEEL_M = 2.105;
+  const cadFactor = ring => 60 / (3.6 * (ring / COG_TEETH) * WHEEL_M);
+  const cadFromSpeed = (kmh, k) => (kmh > 3 && k > 0) ? Math.min(160, kmh * k) : 0;
 
   function parseFeatures(dv) {
     if (dv.byteLength < 8) return null;
@@ -120,10 +147,29 @@ const Core = (() => {
       } else if (b.t === 'ramp') {
         steps.push({ d, a: b.p0, b: b.p1, abs, cad: b.cad || null, label: b.label || (b.p1 >= b.p0 ? 'Rampa' : 'Defaticamento') });
       } else {
-        steps.push({ d, a: b.p, b: b.p, abs, cad: b.cad || null, label: b.label || (abs ? 'Costante' : ZONES[zoneIndex(b.p)].name) });
+        steps.push({ d, a: b.p, b: b.p, abs, cad: b.cad || null, label: b.label || (abs ? 'Costante' : ZONES[zoneIndex(b.p)].name), auto: !b.label });
       }
     }
+    autoLabels(steps);
+    steps.forEach(s => { delete s.auto; });
     return steps;
+  }
+
+  // Gli allenamenti del coach (CoachPeaking) arrivano come semplici blocchi costanti, senza nomi.
+  // I blocchi facili all'inizio diventano "Riscaldamento", quelli alla fine "Defaticamento",
+  // quelli facili e brevi accanto a un blocco di lavoro "Recupero".
+  function autoLabels(steps) {
+    const easy = s => s.auto && !s.abs && !s.free && Math.max(s.a, s.b) < 0.76;
+    const hard = s => s && !s.free && !s.abs && Math.max(s.a, s.b) >= 0.85;
+    const n = steps.length;
+    if (n < 3) return;
+    let i = 0;
+    while (i < n - 1 && easy(steps[i])) { steps[i].label = 'Riscaldamento'; i++; }
+    let j = n - 1;
+    while (j > i && easy(steps[j])) { steps[j].label = 'Defaticamento'; j--; }
+    for (let k = i; k <= j; k++) {
+      if (easy(steps[k]) && steps[k].d <= 600 && (hard(steps[k - 1]) || hard(steps[k + 1]))) steps[k].label = 'Recupero';
+    }
   }
 
   const stepTarget = (s, tIn, ftp) => {
@@ -176,7 +222,7 @@ const Core = (() => {
     if (!blocks.length) throw new Error('Nel file non ho trovato blocchi di allenamento (.zwo).');
     const pw = blocks.flatMap(b => [b.p, b.p0, b.p1, b.p2].filter(v => v != null));
     if (pw.some(v => v > 4)) blocks.forEach(b => { b.abs = true; });
-    return { name: (name || 'Allenamento importato').trim(), blocks };
+    return { name: (name || '').trim(), blocks };
   }
 
   function parseErgMrc(text) {
@@ -197,19 +243,29 @@ const Core = (() => {
       blocks.push(Math.abs(a - b) < 1e-9 ? { t: 'steady', d, p: a, abs } : { t: 'ramp', d, p0: a, p1: b, abs });
     }
     if (!blocks.length) throw new Error('Nessun segmento valido nel file.');
-    return { name: (name || 'Allenamento importato').trim(), blocks };
+    return { name: (name || '').trim(), blocks };
+  }
+
+  // nome leggibile dal nome del file: "2026-11-20_Soglia_3x8.zwo" -> "Soglia 3x8"
+  function nameFromFile(filename) {
+    let n = String(filename || '').replace(/\.[a-z0-9]{2,4}$/i, '');
+    n = n.replace(/\s*\(\d+\)$/, '').replace(/^\d{4}[-_.]?\d{2}[-_.]?\d{2}[ _-]*/, '').replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!n || /^(workout|allenamento|download|file|export)( ?\(?\d+\)?)?$/i.test(n)) return '';
+    return n.charAt(0).toUpperCase() + n.slice(1);
   }
 
   function parseWorkoutFile(text, filename = '') {
     const f = filename.toLowerCase();
     const t = text.trim();
+    let w;
     if (f.endsWith('.json') || t.startsWith('{')) {
       const o = JSON.parse(t);
       if (!Array.isArray(o.blocks)) throw new Error('JSON senza "blocks".');
-      return { name: o.name || 'Allenamento', blocks: o.blocks };
-    }
-    if (f.endsWith('.zwo') || /<workout_file|<workout>/i.test(t)) return parseZwo(t);
-    return parseErgMrc(t);
+      w = { name: o.name || '', blocks: o.blocks };
+    } else if (f.endsWith('.zwo') || /<workout_file|<workout>/i.test(t)) w = parseZwo(t);
+    else w = parseErgMrc(t);
+    w.name = w.name || nameFromFile(filename) || 'Allenamento del coach';
+    return w;
   }
 
   /* ---------- Statistiche ---------- */
@@ -363,7 +419,7 @@ const Core = (() => {
     return w.bytes();
   }
 
-  return { UUID, parseIndoorBikeData, parseHeartRate, makeCpsParser, parseFeatures, parsePowerRange, cmd,
+  return { UUID, parseIndoorBikeData, parseHeartRate, makeCpsParser, makeCscParser, cadFactor, cadFromSpeed, COG_TEETH, nameFromFile, parseFeatures, parsePowerRange, cmd,
     ZONES, zoneIndex, hrZoneIndex, expand, stepTarget, totalDur, locate, estimate,
     parseZwo, parseErgMrc, parseWorkoutFile, normPower, bestAvg, summarize, buildFit, mean };
 })();

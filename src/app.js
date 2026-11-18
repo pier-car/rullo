@@ -21,7 +21,7 @@ Oggi l’allenamento migliore è quello che hai voglia di fare.`
    clientId:  l'ID dell'app Strava creata dall'atleta */
 const STRAVA = { workerUrl: '', clientId: '' };
 /* ================================================================ */
-const APP_VERSION = '2.3';
+const APP_VERSION = '2.4';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -113,12 +113,13 @@ async function migrateSessions() {
 }
 
 /* ---------- Stato ---------- */
-const DEFAULT_PROFILE = { name: '', ftp: 150, weight: 60, hrMax: 190, sound: true, coachPhone: '', endMsg: '' };
+// cadRing: denti della corona usata sul rullo; cadK: fattore tarato (rpm per km/h), null = calcolato dalla corona
+const DEFAULT_PROFILE = { name: '', ftp: 150, weight: 60, hrMax: 190, sound: true, coachPhone: '', endMsg: '', cadEst: true, cadRing: 34, cadK: null };
 const S = {
   profile: Object.assign({}, DEFAULT_PROFILE, store.get('profile', {})),
   custom: store.get('workouts', []),
-  trainer: null, trainerState: 'off', hr: null, hrState: 'off',
-  live: { power: null, cad: null, speed: null, hr: null, trainerHr: null, lastData: 0, lastHr: 0, buf: [] }
+  trainer: null, trainerState: 'off', hr: null, hrState: 'off', cadDev: null, cadState: 'off',
+  live: { power: null, cad: null, speed: null, hr: null, trainerHr: null, lastData: 0, lastHr: 0, buf: [], sensorCad: null, lastSensor: 0 }
 };
 const R = {
   state: 'idle', wk: null, mode: 'erg', ergW: 120, intensity: 100, offset: 0, grade: 0, gear: 6,
@@ -332,6 +333,38 @@ class BleHr {
   disconnect() { this.userClose = true; try { this.dev.gatt.disconnect(); } catch (e) { } this.cb.state('off'); }
 }
 
+class BleCad {
+  constructor(cb) { this.cb = cb; this.userClose = false; }
+  async connect() {
+    this.dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [U.csc] }] });
+    this.name = this.dev.name || 'Sensore cadenza';
+    this.dev.addEventListener('gattserverdisconnected', () => this.onDisc());
+    this.cb.state('connecting');
+    await this.setup();
+  }
+  async setup() {
+    const srv = await this.dev.gatt.connect();
+    const ch = await (await srv.getPrimaryService(U.csc)).getCharacteristic(U.cscMeas);
+    const parse = Core.makeCscParser();
+    let first = true;
+    ch.addEventListener('characteristicvaluechanged', e => {
+      const r = parse(e.target.value, performance.now());
+      if (first) { first = false; logEvent('cadenza', `sensore: flag 0x${e.target.value.getUint8(0).toString(16)}, giri pedivella ${r.cadence != null ? 'sì' : 'no'}`); }
+      if (r.cadence != null) this.cb.cad(r.cadence);
+    });
+    await ch.startNotifications();
+    this.cb.state('on');
+  }
+  async onDisc() {
+    if (this.userClose) { this.cb.state('off'); return; }
+    logEvent('cadenza', 'sensore: connessione caduta');
+    this.cb.state('reconnecting');
+    for (const s of [1, 2, 4, 8, 10, 15]) { await sleep(s * 1000); if (this.userClose) return; try { await this.setup(); return; } catch (e) { } }
+    this.cb.state('off');
+  }
+  disconnect() { this.userClose = true; try { this.dev.gatt.disconnect(); } catch (e) { } this.cb.state('off'); }
+}
+
 class DemoTrainer {
   constructor(cb) { this.cb = cb; this.canControl = true; this.name = 'Demo'; this.mode = 'sim'; this.tw = 0; this.g = 0; this.p = 0; this.hr = 92; this.range = { min: 0, max: 600, inc: 1 }; this.features = { power: true, sim: true }; this.isDemo = true; }
   async connect() { this.cb.state('on'); this.iv = setInterval(() => this.tick(), 500); }
@@ -378,6 +411,24 @@ const hrCb = {
   state: s => { S.hrState = s; renderDevices(); },
   hr: v => { S.live.hr = v; S.live.lastHr = performance.now(); }
 };
+const cadCb = {
+  state: s => { S.cadState = s; if (S.cadPanel) S.cadPanel(); },
+  cad: v => { S.live.sensorCad = v; S.live.lastSensor = performance.now(); }
+};
+
+/* ---------- Cadenza: sensore, rullo o stima dalla velocità ---------- */
+// Il Van Rysel D100 non misura la cadenza. Con la Zwift Cog (un solo pignone) la velocità del volano
+// segue le pedalate con un rapporto fisso: la cadenza si stima da lì, e si può tarare contando le pedalate.
+const cadK = () => S.profile.cadK > 0 ? S.profile.cadK : Core.cadFactor(S.profile.cadRing || 34);
+function cadNow() {
+  const L = S.live, now = performance.now();
+  if (L.sensorCad != null && now - L.lastSensor < 3000) return { v: L.sensorCad, src: 'sensor' };
+  if (!fresh()) return { v: null, src: null };
+  if (L.cadSeen && L.cad != null) return { v: L.cad, src: 'trainer' };
+  if (S.profile.cadEst && L.speed != null) return { v: Core.cadFromSpeed(L.speed, cadK()), src: 'est' };
+  return { v: null, src: null };
+}
+const CAD_SRC = { sensor: 'dal sensore', trainer: 'dal rullo', est: 'stimata dalla velocità del rullo' };
 
 function bluetoothMissing() {
   sheet(`<h2>Bluetooth non disponibile qui</h2>
@@ -481,6 +532,91 @@ async function doConnectHr() {
   }
 }
 
+/* ---------- Cadenza: pannello (dal riquadro rpm e dal Profilo) ---------- */
+async function connectCad() {
+  if (!navigator.bluetooth) return bluetoothMissing();
+  const c = new BleCad(cadCb);
+  try {
+    await c.connect(); S.cadDev = c;
+    logEvent('cadenza', 'sensore collegato ' + c.name); toast(`${c.name} collegato`);
+  } catch (e) {
+    S.cadState = 'off'; if (S.cadPanel) S.cadPanel();
+    logEvent('cadenza', 'sensore: collegamento fallito: ' + e.name + ' ' + (e.message || ''));
+    if (e.name !== 'NotFoundError') toast('Sensore non collegato: ' + (e.message || e));
+    else toast('Nessun sensore scelto. Gira la pedivella per svegliarlo e riprova.');
+  }
+}
+function cadSheet() { sheet('<h2>Cadenza</h2><div id="cadP"></div>', { onMount: el => cadPanel(el.querySelector('#cadP')) }); }
+function cadPanel(el) {
+  if (!el) return;
+  if (el.dataset.cal) return;                       // taratura in corso: non ridisegnare
+  const P = S.profile, sensorOn = S.cadDev && S.cadState !== 'off';
+  const nowText = () => { const cn = cadNow(); return cn.v != null ? `${Math.round(cn.v)} rpm, ${CAD_SRC[cn.src]}` : 'nessun dato (collega il rullo e pedala)'; };
+  el.innerHTML = `<div class="pz"><span>Adesso</span><em id="cNow">${esc(nowText())}</em></div>
+    <p class="muted">Il rullo D100 non misura la cadenza. Con la Zwift Cog però c’è un solo pignone, quindi la velocità del rullo segue le pedalate: l’app la ricava da lì. Per un valore esatto collega un sensore di cadenza.</p>
+    <label class="switch"><input type="checkbox" id="cEst" ${P.cadEst ? 'checked' : ''}> Stima la cadenza dalla velocità del rullo</label>
+    <div class="form"><label class="fld wide"><span>Denti della corona usata sul rullo</span><input id="cRing" type="number" inputmode="numeric" value="${esc(P.cadRing)}"><span class="hint muted">Piccola: di solito 34. Grande: 50.</span></label></div>
+    <p class="muted">${P.cadK ? `Tarata: ${fmt(P.cadK, 2)} rpm ogni km/h.` : 'Non ancora tarata: il valore viene dalla corona. Con la taratura diventa più preciso.'}</p>
+    <div class="row"><button class="btn" id="cCal">Tara in 30 secondi</button>${P.cadK ? '<button class="btn subtle" id="cCalOff">Togli la taratura</button>' : ''}</div>
+    <div id="cCalBox"></div>
+    <h3>Sensore di cadenza</h3>
+    <p class="muted">Un sensore Bluetooth da pedivella (20–35 €, profilo “cadence” o “CSC”). Quando è collegato ha la precedenza sulla stima.</p>
+    <div class="row"><button class="btn ${sensorOn ? 'danger subtle' : 'primary'}" id="cSens">${sensorOn ? (S.cadState === 'on' ? 'Scollega ' + esc(S.cadDev.name) : 'Riconnessione…') : 'Collega sensore'}</button></div>`;
+  S.cadPanel = () => { if (el.isConnected) cadPanel(el); };
+  clearInterval(el._iv);
+  el._iv = setInterval(() => { if (!el.isConnected) return clearInterval(el._iv); const n = el.querySelector('#cNow'); if (n) n.textContent = nowText(); }, 1000);
+  const save = () => { store.set('profile', P); };
+  el.querySelector('#cEst').onchange = e => { P.cadEst = e.target.checked; save(); logEvent('cadenza', 'stima ' + (P.cadEst ? 'attiva' : 'spenta')); };
+  el.querySelector('#cRing').onchange = e => {
+    const v = Math.round(parseFloat(e.target.value));
+    if (!(v >= 20 && v <= 60)) { toast('Scrivi i denti della corona, tra 20 e 60'); e.target.value = P.cadRing; return; }
+    if (v !== P.cadRing) { P.cadRing = v; P.cadK = null; save(); logEvent('cadenza', 'corona ' + v); cadPanel(el); }
+  };
+  const off = el.querySelector('#cCalOff'); if (off) off.onclick = () => { P.cadK = null; save(); logEvent('cadenza', 'taratura tolta'); cadPanel(el); };
+  el.querySelector('#cSens').onclick = () => {
+    if (sensorOn) { S.cadDev.disconnect(); S.cadDev = null; S.live.sensorCad = null; cadPanel(el); return; }
+    connectCad();
+  };
+  el.querySelector('#cCal').onclick = () => calibrate(el);
+}
+// taratura: 30 s di pedalata regolare, lei conta i giri, l'app li confronta con la velocità media del rullo
+function calibrate(el) {
+  const box = el.querySelector('#cCalBox');
+  if (!S.trainer || S.trainerState !== 'on' || !fresh() || !(S.live.speed > 3)) { toast('Collega il rullo e pedala, poi tocca di nuovo Tara'); return; }
+  unlockAudio();
+  el.dataset.cal = '1';
+  const stop = () => { delete el.dataset.cal; clearInterval(box._iv); };
+  box.innerHTML = `<div class="card"><p>Pedala <b>regolare</b>. Quando tocchi Via, conta quante volte il <b>piede destro</b> passa in basso, per 30 secondi.</p>
+    <div class="row"><button class="btn primary" id="cGo">Via</button><button class="btn subtle" id="cNo">Annulla</button></div></div>`;
+  box.querySelector('#cNo').onclick = () => { stop(); box.innerHTML = ''; };
+  box.querySelector('#cGo').onclick = () => {
+    const samples = []; let left = 30;
+    beep(880, 0.2);
+    box.innerHTML = `<div class="card"><p>Conta… <b id="cLeft">30</b> s</p></div>`;
+    box._iv = setInterval(() => {
+      if (fresh() && S.live.speed != null) samples.push(S.live.speed);
+      left -= 0.5;
+      const l = box.querySelector('#cLeft'); if (l) l.textContent = Math.ceil(left);
+      if (left > 0) return;
+      clearInterval(box._iv); beep(1175, 0.4);
+      const v = samples.length ? samples.reduce((a, b) => a + b, 0) / samples.length : 0;
+      if (samples.length < 40 || v < 5) { stop(); box.innerHTML = '<p class="g-warn">Durante la prova il rullo non ha mandato abbastanza dati. Riprova pedalando regolare.</p>'; return; }
+      box.innerHTML = `<div class="card"><div class="form"><label class="fld"><span>Giri contati in 30 secondi</span><input id="cCnt" type="number" inputmode="numeric"></label></div>
+        <div class="row"><button class="btn primary" id="cOk">Salva taratura</button><button class="btn subtle" id="cNo2">Annulla</button></div></div>`;
+      box.querySelector('#cNo2').onclick = () => { stop(); box.innerHTML = ''; };
+      box.querySelector('#cOk').onclick = () => {
+        const n = parseFloat(box.querySelector('#cCnt').value);
+        const k = n * 2 / v;
+        if (!(n >= 15 && n <= 75) || !(k > 1.2 && k < 6)) { toast('Valore strano: ricontrolla il numero o rifai la prova'); return; }
+        S.profile.cadK = Math.round(k * 1000) / 1000; store.set('profile', S.profile);
+        logEvent('cadenza', `taratura: ${n} giri in 30 s a ${fmt(v, 1)} km/h, fattore ${fmt(k, 2)} (dalla corona sarebbe ${fmt(Core.cadFactor(S.profile.cadRing), 2)})`);
+        toast(`Taratura salvata: ${Math.round(n * 2)} rpm`);
+        stop(); cadPanel(el);
+      };
+    }, 500);
+  };
+}
+
 /* ---------- Motore allenamento ---------- */
 const fresh = () => performance.now() - S.live.lastData < 3000;
 function livePower() {
@@ -531,7 +667,7 @@ function startRide() {
       { onMount: (el, close) => { el.querySelector('#c1').onclick = () => { close(); connectTrainer(); }; el.querySelector('#c2').onclick = () => { close(); connectDemo(); }; } });
     return;
   }
-  Object.assign(R, { state: 'running', ms: 0, sec: 0, start: Date.now(), dist: 0, stepIdx: -1, offset: 0, rescue: false, lowCad: 0, highCad: 0, wkDone: false, rampFtp: null, rampLow: 0, banner: null, sent: null,
+  Object.assign(R, { state: 'running', ms: 0, sec: 0, start: Date.now(), dist: 0, stepIdx: -1, offset: 0, rescue: false, lowCad: 0, highCad: 0, wkDone: false, rampFtp: null, rampLow: 0, banner: null, sent: null, cadSrc: {},
     data: { t: [], p: [], c: [], h: [], v: [], d: [], g: [], st: [] } });
   R.lastTick = performance.now();
   R.gapWarned = false;
@@ -556,14 +692,19 @@ function skipStep() {
 function onSecond() {
   const L = S.live, ok = fresh();
   const p = ok ? (L.power ?? 0) : 0, v = ok ? (L.speed ?? 0) : 0, h = liveHr();
-  const hasCad = !!L.cadSeen;
-  const c = ok && hasCad ? (L.cad ?? 0) : (hasCad ? 0 : null);
+  // cadenza misurata (sensore o rullo): serve alla protezione ERG e al test a rampa
+  const cn = cadNow();
+  const hasCad = !!L.cadSeen || cn.src === 'sensor';
+  const c = (cn.src === 'sensor' || cn.src === 'trainer') ? cn.v : (hasCad ? 0 : null);
+  // cadenza registrata: anche quella stimata
+  const cRec = cn.v != null ? cn.v : (hasCad ? 0 : null);
+  if (cn.src && R.cadSrc) { R.cadSrc[cn.src] = (R.cadSrc[cn.src] || 0) + 1; if (R.cadSrc[cn.src] === 1) logEvent('cadenza', `in uso ${CAD_SRC[cn.src]}${cn.src === 'est' ? ` (corona ${S.profile.cadRing}, fattore ${fmt(cadK(), 2)}${S.profile.cadK ? ' tarato' : ''})` : ''}`); }
   R.dist += v / 3.6;
   const loc = curLoc();
   const D = R.data;
   const t = Math.max(D.t.length ? D.t[D.t.length - 1] + 1 : 0, Math.round((Date.now() - R.start) / 1000));
   const tg = (R.mode === 'erg' || R.wk) ? targetW() : null;
-  D.t.push(t); D.p.push(Math.round(p)); D.c.push(c == null ? null : Math.round(c)); D.h.push(h ? Math.round(h) : null);
+  D.t.push(t); D.p.push(Math.round(p)); D.c.push(cRec == null ? null : Math.round(cRec)); D.h.push(h ? Math.round(h) : null);
   D.v.push(Math.round(v * 10) / 10); D.d.push(Math.round(R.dist * 10) / 10);
   D.g.push(tg != null ? Math.round(tg) : null); D.st.push(R.wk ? (loc ? loc.i : -1) : null);
 
@@ -662,6 +803,7 @@ async function saveRide() {
     id: uid('s'), start: R.start, name: R.wk ? R.wk.name : 'Pedalata libera', ftp: S.profile.ftp,
     steps: R.wk ? R.wk.steps.map(s => ({ label: s.label, d: s.d })) : null,
     rampFtp: R.rampFtp ?? (R.wk && R.wk.rampTest ? Math.round((Core.bestAvg(R.data.p, 60) || 0) * 0.75) || null : null),
+    cadEst: cadMostlyEst(),
     data: R.data
   };
   autosave();
@@ -683,8 +825,9 @@ async function persistSession(sess) {
 }
 function autosave() {
   if (!R.data || R.state === 'idle') return;
-  store.set('live', { start: R.start, name: R.wk ? R.wk.name : 'Pedalata libera', ftp: S.profile.ftp, steps: R.wk ? R.wk.steps.map(s => ({ label: s.label, d: s.d })) : null, data: R.data, rampFtp: R.rampFtp });
+  store.set('live', { start: R.start, name: R.wk ? R.wk.name : 'Pedalata libera', ftp: S.profile.ftp, steps: R.wk ? R.wk.steps.map(s => ({ label: s.label, d: s.d })) : null, data: R.data, rampFtp: R.rampFtp, cadEst: cadMostlyEst() });
 }
+function cadMostlyEst() { const c = R.cadSrc || {}; return (c.est || 0) > (c.sensor || 0) + (c.trainer || 0); }
 
 /* ---------- UI: struttura ---------- */
 function toast(msg) {
@@ -851,7 +994,9 @@ function renderRide(full) {
     $('stepLeft').textContent = ''; $('wkTotal').textContent = '';
   }
   // metriche
-  $('mCad').textContent = ok && L.cad != null ? Math.round(L.cad) : '–';
+  const cn = cadNow();
+  $('mCad').textContent = cn.v != null ? Math.round(cn.v) : '–';
+  $('mCadL').textContent = cn.src === 'est' ? 'rpm stimati' : 'rpm';
   $('mHr').textContent = hr ? Math.round(hr) : '–';
   $('mSpd').textContent = ok && L.speed != null ? fmt(L.speed, 1) : '–';
   $('mDist').textContent = fmt(R.dist / 1000, 1);
@@ -860,7 +1005,7 @@ function renderRide(full) {
   $('mKj').textContent = D ? Math.round(D.p.reduce((a, b) => a + b, 0) / 1000) : 0;
   $('clock').textContent = fmtDur(R.sec);
   const cadBox = $('mCad').parentElement;
-  cadBox.classList.toggle('off', !!(step && step.cad && ok && L.cad != null && Math.abs(L.cad - step.cad) > 8));
+  cadBox.classList.toggle('off', !!(step && step.cad && cn.v != null && Math.abs(cn.v - step.cad) > 8));
   // banner
   const b = $('banner');
   if (R.banner) { b.hidden = false; b.dataset.kind = R.banner.kind; b.textContent = R.banner.text; } else b.hidden = true;
@@ -916,6 +1061,7 @@ function loadWorkout(id) {
 function bindRide() {
   $('devTrainer').onclick = connectTrainer;
   $('devHr').onclick = connectHr;
+  $('mCadBox').onclick = cadSheet;
   $('pickWorkout').onclick = pickWorkoutSheet;
   $('modeSeg').onclick = e => { const b = e.target.closest('button'); if (!b) return; if (R.mode !== b.dataset.mode) logEvent('modalità', `${R.mode} → ${b.dataset.mode}${R.state !== 'idle' ? ' durante l’allenamento (' + fmtDur(R.sec) + ')' : ''}`); R.mode = b.dataset.mode; R.sent = null; renderRide(true); };
   const adj = (fn) => () => { fn(); R.sent = null; renderRide(true); };
@@ -1100,11 +1246,11 @@ function coachText(sess, sum) {
     `Durata ${fmtDur(sum.dur)}, ${fmt(sum.dist / 1000, 1)} km`,
     `Potenza media ${fmt(sum.avgP)} W, NP ${fmt(sum.np)} W, max ${fmt(sum.maxP)} W`,
     `IF ${fmt(sum.IF, 2)}, TSS ${fmt(sum.tss)}, ${fmt(sum.kj)} kJ (FTP ${sum.ftp} W)`,
-    `Cadenza media ${fmt(sum.avgC)} rpm` + (sum.hasHr ? `, FC media ${fmt(sum.avgH)} / max ${fmt(sum.maxH)} bpm` : '')
-  ];
+    [sum.avgC != null ? `Cadenza media ${fmt(sum.avgC)} rpm${sess.cadEst ? ' (stimata)' : ''}` : '', sum.hasHr ? `FC media ${fmt(sum.avgH)} / max ${fmt(sum.maxH)} bpm` : ''].filter(Boolean).join(', ')
+  ].filter(Boolean);
   if (sum.decoupling != null) lines.push(`Disaccoppiamento potenza/FC ${fmt(sum.decoupling, 1)}%`);
   const work = sum.laps.filter(l => l.target != null && l.dur >= 30 && sess.steps && sess.steps[l.step] && /Ripetuta|Soglia|VO2|Tempo|Ritmo/i.test(l.label));
-  if (work.length) lines.push('', 'Blocchi di lavoro:', ...work.map(l => `${l.label}: ${fmt(l.avgP)} W (obiettivo ${fmt(l.target)})` + (l.avgH ? `, ${fmt(l.avgH)} bpm` : '') + `, ${fmt(l.avgC)} rpm`));
+  if (work.length) lines.push('', 'Blocchi di lavoro:', ...work.map(l => `${l.label}: ${fmt(l.avgP)} W (obiettivo ${fmt(l.target)})` + (l.avgH ? `, ${fmt(l.avgH)} bpm` : '') + (l.avgC != null ? `, ${fmt(l.avgC)} rpm` : '')));
   if (sess.rampFtp) lines.push('', `Test a rampa: FTP stimata ${sess.rampFtp} W`);
   return lines.join('\n');
 }
@@ -1129,7 +1275,7 @@ async function openSession(id, justSaved) {
   sheet(`${justSaved && S.profile.endMsg ? `<p class="dedica">${esc(S.profile.endMsg)}</p>` : ''}
     <h2>${esc(sess.name)}</h2><p class="muted">${new Date(sess.start).toLocaleString('it-IT', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })}</p>
     ${sess.rampFtp ? `<div class="card ok"><b>FTP stimata: ${sess.rampFtp} W</b><p>Attuale: ${S.profile.ftp} W. Con la nuova FTP tutti gli allenamenti si ricalibrano.</p><div class="row"><button class="btn primary" id="setFtp">Usa ${sess.rampFtp} W come FTP</button></div></div>` : ''}
-    <div class="stats">${stat(fmtDur(sum.dur), 'tempo')}${stat(fmt(sum.dist / 1000, 1), 'km')}${stat(fmt(sum.avgP), 'W medi')}${stat(fmt(sum.np), 'NP')}${stat(fmt(sum.IF, 2), 'IF')}${stat(fmt(sum.tss), 'TSS')}${stat(fmt(sum.kj), 'kJ')}${stat(fmt(sum.avgC), 'rpm medi')}${stat(fmt(sum.maxP), 'W max')}${sum.hasHr ? stat(fmt(sum.avgH), 'bpm medi') + stat(fmt(sum.maxH), 'bpm max') : ''}${stat(fmt(sum.avgV, 1), 'km/h medi')}</div>
+    <div class="stats">${stat(fmtDur(sum.dur), 'tempo')}${stat(fmt(sum.dist / 1000, 1), 'km')}${stat(fmt(sum.avgP), 'W medi')}${stat(fmt(sum.np), 'NP')}${stat(fmt(sum.IF, 2), 'IF')}${stat(fmt(sum.tss), 'TSS')}${stat(fmt(sum.kj), 'kJ')}${stat(fmt(sum.avgC), sess.cadEst ? 'rpm medi (stimati)' : 'rpm medi')}${stat(fmt(sum.maxP), 'W max')}${sum.hasHr ? stat(fmt(sum.avgH), 'bpm medi') + stat(fmt(sum.maxH), 'bpm max') : ''}${stat(fmt(sum.avgV, 1), 'km/h medi')}</div>
     <canvas class="chart" id="sChart"></canvas>
     <p class="legend"><i style="background:var(--z4)"></i>potenza per zona <i class="dash"></i>obiettivo ${sum.hasHr ? '<i style="background:var(--hr)"></i>cardio' : ''}</p>
     <h3>Tempo nelle zone di potenza</h3>
@@ -1338,6 +1484,7 @@ function renderProfile() {
   const lo = [0, 0.55, 0.75, 0.9, 1.05, 1.2, 1.5];
   $('pZones').innerHTML = Core.ZONES.map((z, i) => `<div class="pz"><i class="dot" style="background:${z.color}"></i><span>Z${i + 1} ${z.name}</span><em>${i === 6 ? `oltre ${Math.round(lo[i] * P.ftp)} W` : `${Math.round(lo[i] * P.ftp)}–${Math.round(z.max * P.ftp) - 1} W`}</em></div>`).join('');
   $('ver').textContent = 'Versione ' + APP_VERSION;
+  cadPanel($('pCad'));
   Strava.render();
   $('pInstall').hidden = !installEvt;
   $('pSupport').innerHTML = `<div class="pz"><span>Bluetooth per rullo e cardio</span><em>${navigator.bluetooth ? 'disponibile' : 'non disponibile in questo browser'}</em></div>

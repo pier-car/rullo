@@ -86,6 +86,7 @@ body.riding #v-ride{padding-bottom:14px}
 .m b{display:block;font:600 27px/1 var(--num);font-variant-numeric:tabular-nums}
 .m span{font-size:11.5px;color:var(--ink2)}
 .m.off b{color:var(--warn)}
+button.m{border:0;border-radius:0;width:100%;display:block}
 .prof{width:100%;height:64px;display:block;border-radius:10px;background:var(--surface)}
 body.riding .prof{height:76px}
 body.riding .pick{display:none}
@@ -297,7 +298,7 @@ body.riding #toast{bottom:calc(18px + env(safe-area-inset-bottom,0px))}
   </div>
   <div class="step"><div><div class="step-name" id="stepName"></div><div class="step-next" id="stepNext"></div></div><div class="step-r"><div class="step-left" id="stepLeft"></div><div id="wkTotal"></div></div></div>
   <div class="metrics">
-    <div class="m"><b id="mCad">–</b><span>rpm</span></div>
+    <button class="m" id="mCadBox" aria-label="Cadenza: tocca per sensore e taratura"><b id="mCad">–</b><span id="mCadL">rpm</span></button>
     <div class="m"><b id="mHr">–</b><span>bpm</span></div>
     <div class="m"><b id="mSpd">–</b><span>km/h</span></div>
     <div class="m"><b id="mDist">0,0</b><span>km</span></div>
@@ -359,6 +360,7 @@ body.riding #toast{bottom:calc(18px + env(safe-area-inset-bottom,0px))}
     <div class="row"><button class="btn" id="pRamp">Fai il test FTP a rampa</button></div>
   </div>
   <div class="section"><h3>Le tue zone di potenza</h3><div class="zones" id="pZones"></div></div>
+  <div class="section"><h3>Cadenza</h3><div id="pCad"></div></div>
   <div class="section help">
     <h3>Dove usarla</h3>
     <ul>
@@ -371,7 +373,7 @@ body.riding #toast{bottom:calc(18px + env(safe-area-inset-bottom,0px))}
     <ol>
       <li><b>Chiudi Zwift del tutto</b> (anche Zwift Companion sul telefono) e OneLap Fit: il rullo parla con una sola app alla volta, e finché è collegato a Zwift qui non compare.</li>
       <li>Per i battiti dal COROS: spegni il Bluetooth del telefono, sull’orologio tieni premuto Indietro e scegli “Trasmetti FC”, poi qui tocca “Collega cardio”.</li>
-      <li>In modalità ERG tieni una cadenza regolare tra 80 e 95: è il rullo a regolare la durezza, non le marce.</li>
+      <li>In modalità ERG tieni una cadenza regolare tra 80 e 95: è il rullo a regolare la durezza, non le marce. Se cambi corona sul rullo, aggiornala qui sotto in “Cadenza”.</li>
       <li>Su iPhone disattiva il blocco automatico dello schermo (Impostazioni › Schermo e luminosità).</li>
     </ol>
   </div>
