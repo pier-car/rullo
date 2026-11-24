@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -27,10 +27,18 @@ jobs:
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
 
+      # Si pubblicano solo i file del sito: i sorgenti e le prove in src/ restano nel repository.
+      - name: Prepare site
+        run: |
+          mkdir -p _site
+          cp index.html sw.js manifest.webmanifest icon-*.png _site/
+          grep -o "APP_VERSION = '[^']*'" _site/index.html
+          ls -la _site
+
       - name: Upload site
         uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: _site
 
       - name: Deploy site
         id: deployment

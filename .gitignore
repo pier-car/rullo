@@ -3,3 +3,4 @@ __pycache__/
 src/test/*.png
 src/test/*.fit
 src/test/backup*.json
+_site/
