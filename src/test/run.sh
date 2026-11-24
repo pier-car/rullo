@@ -11,7 +11,7 @@ trap 'kill $SRV 2>/dev/null; rm -f "$ROOT/index_t.html"' EXIT
 sleep 1
 cd "$ROOT/src/test"
 TESTS=("$@")
-[ ${#TESTS[@]} -eq 0 ] && TESTS=(test_core.js bletest.py guidetest.py hrtest.py nocad.py v2test.py fulltest.py v23test.py v24test.py)
+[ ${#TESTS[@]} -eq 0 ] && TESTS=(test_core.js bletest.py guidetest.py hrtest.py nocad.py v2test.py fulltest.py v23test.py v24test.py v24ios.py)
 for t in "${TESTS[@]}"; do
   echo "== $t"
   if [[ $t == *.js ]]; then node "$t" 2>&1 | tail -30; else timeout 200 python3 "$t" 2>&1 | tail -40; fi

@@ -430,7 +430,32 @@ function cadNow() {
 }
 const CAD_SRC = { sensor: 'dal sensore', trainer: 'dal rullo', est: 'stimata dalla velocità del rullo' };
 
+/* ---------- iPhone e iPad: serve Bluefy ---------- */
+// Su iOS né Safari né Chrome permettono alle pagine web di usare il Bluetooth: serve il browser gratuito Bluefy.
+const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const BLUEFY_URL = 'https://apps.apple.com/app/id1492822055';
+const appUrl = () => location.origin + location.pathname.replace(/index\.html$/, '');
+const bluefyHtml = () => `<ol class="steps">
+    <li><b>Scarica Bluefy</b>, gratuita, dall’App Store.<div class="row"><a class="btn primary" href="${BLUEFY_URL}" target="_blank" rel="noopener">Apri l’App Store</a></div></li>
+    <li><b>Copia l’indirizzo</b> dell’app: <b>${esc(appUrl().replace(/^https:\/\//, ''))}</b><div class="row"><button class="btn" data-copy-url>Copia indirizzo</button></div></li>
+    <li><b>Apri Bluefy</b>, incolla l’indirizzo nella barra in alto e aggiungilo ai preferiti (la stella), così la prossima volta basta un tocco.</li>
+    <li>La prima volta Bluefy chiede di usare il Bluetooth: tocca <b>Consenti</b>. Poi qui dentro funziona tutto come sul computer.</li>
+  </ol>
+  <p class="muted">Gli allenamenti salvati in Safari non passano da soli in Bluefy: se ne hai già, esporta un backup dal Profilo e importalo in Bluefy. In alternativa puoi usare il Mac con Chrome.</p>`;
+function bindBluefy(el) {
+  el.querySelectorAll('[data-copy-url]').forEach(b => b.onclick = async () => {
+    try { await navigator.clipboard.writeText(appUrl()); b.textContent = 'Copiato ✓'; }
+    catch (e) { prompt('Copia questo indirizzo:', appUrl()); }
+  });
+}
+function bluefySheet() {
+  sheet(`<h2>Su iPhone usa Bluefy</h2><p>Su iPhone e iPad Safari e Chrome non possono usare il Bluetooth, quindi da qui il rullo e il cardio non si collegano. Serve l’app <b>Bluefy</b>: è un browser come Safari, fatto apposta per il Bluetooth.</p>${bluefyHtml()}
+    <div class="row"><button class="btn subtle" id="bfDemo">Intanto prova in modalità demo</button></div>`,
+    { onMount: (el, close) => { bindBluefy(el); el.querySelector('#bfDemo').onclick = () => { close(); connectDemo(); }; } });
+}
+
 function bluetoothMissing() {
+  if (IS_IOS) return bluefySheet();
   sheet(`<h2>Bluetooth non disponibile qui</h2>
     <p>Questo browser non permette alle pagine web di usare il Bluetooth.</p>
     <p><b>Su Mac, PC e Android:</b> apri questo indirizzo con <b>Chrome</b> (o Edge). Su Mac non funziona con Safari.</p>
@@ -1008,7 +1033,7 @@ function renderRide(full) {
   cadBox.classList.toggle('off', !!(step && step.cad && cn.v != null && Math.abs(cn.v - step.cad) > 8));
   // banner
   const b = $('banner');
-  if (R.banner) { b.hidden = false; b.dataset.kind = R.banner.kind; b.textContent = R.banner.text; } else b.hidden = true;
+  if (R.banner) { b.hidden = false; b.dataset.kind = R.banner.kind; b.textContent = R.banner.text; b.classList.toggle('tap', !!R.banner.ios); } else b.hidden = true;
   // grafico (1 volta al secondo)
   if (full || lastProfDraw !== R.sec) {
     lastProfDraw = R.sec;
@@ -1572,7 +1597,7 @@ function guide() {
   document.body.appendChild(ov);
   let step = 0, timer = null, err = null;
   const hasBt = !!navigator.bluetooth;
-  const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const ios = IS_IOS;
   const done = () => { clearInterval(timer); ov.remove(); store.set('guided', true); showView('ride'); };
   const connected = () => S.trainer && !S.trainer.isDemo && S.trainerState === 'on';
   const fld = (id, label, val, type = 'number') => `<label class="fld"><span>${label}</span><input id="${id}" type="${type}" ${type === 'number' ? 'inputmode="numeric"' : 'autocomplete="given-name"'} value="${esc(val)}"></label>`;
@@ -1581,7 +1606,7 @@ function guide() {
       ${hasBt ? `<p class="g-ok">Questo browser può collegarsi al rullo: sei a posto.</p>
         <p class="muted">Usa sempre questo stesso dispositivo e questo stesso browser: gli allenamenti restano salvati qui.</p>`
       : `<p class="g-warn">Questo browser non può usare il Bluetooth, quindi da qui il rullo non si collega.</p>
-        ${ios ? '<p><b>Su iPhone e iPad:</b> installa l’app gratuita <b>Bluefy</b> dall’App Store, aprila e incolla lì questo indirizzo.</p><p>In alternativa usa il computer con Chrome.</p>'
+        ${ios ? `<p><b>Su iPhone e iPad serve l’app gratuita Bluefy</b>, un browser fatto apposta per il Bluetooth.</p>${bluefyHtml()}`
               : '<p><b>Su computer (Windows o Mac) e su Android:</b> apri questo stesso indirizzo con <b>Chrome</b> o <b>Edge</b>.</p>'}
         <p class="muted">Puoi comunque andare avanti e guardarti l’app in modalità demo.</p>`}
       <div class="g-nav"><button class="btn primary big" data-go="1">Avanti</button></div>`,
@@ -1618,6 +1643,7 @@ function guide() {
     ov.innerHTML = `<div class="w-in"><div class="g-dots">${screens.map((_, i) => `<i class="${i === step ? 'on' : i < step ? 'done' : ''}"></i>`).join('')}</div><p class="g-count">Passo ${step + 1} di ${screens.length}</p>${screens[step]()}</div>`;
     ov.scrollTop = 0;
     ov.querySelectorAll('[data-go]').forEach(b => b.onclick = () => { saveData(); err = null; step = +b.dataset.go; show(); });
+    bindBluefy(ov);
     const c = ov.querySelector('#gConn');
     if (c) c.onclick = async () => {
       c.disabled = true; c.textContent = 'Scegli il rullo nell’elenco…';
@@ -1675,6 +1701,8 @@ function init() {
   bindRide(); bindProfile();
   renderDevices();
   if (store.get('live', null)) R.banner = { text: 'C’è un allenamento non salvato: lo trovi in Storico.', kind: 'warn' };
+  else if (IS_IOS && !navigator.bluetooth) { R.banner = { text: 'Su iPhone il rullo si collega solo con l’app gratuita Bluefy. Tocca qui per vedere come.', kind: 'warn', ios: true }; logEvent('app', 'iPhone senza Bluetooth: consigliata Bluefy'); }
+  $('banner').onclick = () => { if (R.banner && R.banner.ios) bluefySheet(); };
   showView('ride');
   maybeWelcome();
   Strava.handleRedirect().then(() => { Strava.render(); Strava.sync({ quiet: true }); });
